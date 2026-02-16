@@ -134,7 +134,7 @@ export default function DashboardPage() {
         // --- Conversion funnel ---
         const funnelStatuses = [
             { status: "new", label: "New Leads", color: "bg-slate-100 text-slate-700" },
-            { status: "contacted", label: "Contacted", color: "bg-blue-100 text-blue-700" },
+            { status: "contacted", label: "Contacted", color: "bg-cyan-100 text-blue-700" },
             { status: "meeting_scheduled", label: "Meetings", color: "bg-purple-100 text-purple-700" },
             { status: "client", label: "Clients", color: "bg-green-100 text-green-700" },
             { status: "lost", label: "Lost", color: "bg-red-100 text-red-700" },
@@ -212,7 +212,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-3">
                     <ProjectSelector value={projectId} onChange={setProjectId} />
-                    <Button onClick={() => router.push("/call-queue")} className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700">
+                    <Button onClick={() => router.push("/call-queue")} className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600">
                         <PhoneCall className="mr-2 h-4 w-4" /> Call Queue
                     </Button>
                 </div>
@@ -240,7 +240,7 @@ export default function DashboardPage() {
                         <UserPlus className="h-4 w-4 text-slate-400" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-blue-600">{newThisWeek}</div>
+                        <div className="text-3xl font-bold text-cyan-600">{newThisWeek}</div>
                     </CardContent>
                 </Card>
 
@@ -252,7 +252,7 @@ export default function DashboardPage() {
                         <TrendingUp className="h-4 w-4 text-slate-400" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-purple-600">{pipelineCount}</div>
+                        <div className="text-3xl font-bold text-teal-600">{pipelineCount}</div>
                     </CardContent>
                 </Card>
 
@@ -291,7 +291,7 @@ export default function DashboardPage() {
                         <Calendar className="h-4 w-4 text-purple-400" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-3xl font-bold text-purple-600">{meetingsThisWeek}</div>
+                        <div className="text-3xl font-bold text-teal-600">{meetingsThisWeek}</div>
                         <p className="text-xs text-slate-500 mt-1">this week</p>
                     </CardContent>
                 </Card>
@@ -339,7 +339,7 @@ export default function DashboardPage() {
                                     <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
                                         <div
                                             className={`h-full rounded-full transition-all duration-500 ${f.status === "new" ? "bg-slate-400" :
-                                                    f.status === "contacted" ? "bg-blue-500" :
+                                                    f.status === "contacted" ? "bg-cyan-500" :
                                                         f.status === "meeting_scheduled" ? "bg-purple-500" :
                                                             f.status === "client" ? "bg-green-500" :
                                                                 "bg-red-400"

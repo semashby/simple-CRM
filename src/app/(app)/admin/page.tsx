@@ -292,7 +292,7 @@ export default function AdminPage() {
                 </div>
                 <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
                     <DialogTrigger asChild>
-                        <Button className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700">
+                        <Button className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600">
                             <UserPlus className="mr-2 h-4 w-4" /> Assign to Project
                         </Button>
                     </DialogTrigger>
@@ -369,7 +369,7 @@ export default function AdminPage() {
                                     <TableRow key={member.profile.id}>
                                         <TableCell>
                                             <div className="flex items-center gap-3">
-                                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-500 text-xs font-bold text-white">
+                                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-teal-500 text-xs font-bold text-white">
                                                     {(member.profile.full_name || member.profile.email || "?")[0].toUpperCase()}
                                                 </div>
                                                 <div>
@@ -383,11 +383,11 @@ export default function AdminPage() {
                                         </TableCell>
                                         <TableCell className="text-center font-medium">{member.contactCount}</TableCell>
                                         <TableCell className="text-center">
-                                            <span className="font-bold text-blue-600">{member.callsThisWeek}</span>
+                                            <span className="font-bold text-cyan-600">{member.callsThisWeek}</span>
                                         </TableCell>
                                         <TableCell className="text-center text-slate-500">{member.callsTotal}</TableCell>
                                         <TableCell className="text-center">
-                                            <span className={member.meetingsBooked > 0 ? "font-bold text-purple-600" : "text-slate-400"}>
+                                            <span className={member.meetingsBooked > 0 ? "font-bold text-teal-600" : "text-slate-400"}>
                                                 {member.meetingsBooked}
                                             </span>
                                         </TableCell>

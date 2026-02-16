@@ -355,7 +355,7 @@ export default function ContactDetailPage() {
                     {/* Left: Name + badge */}
                     <div className="flex items-center gap-4">
                         {/* Avatar */}
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 text-xl font-bold text-white">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-teal-500 text-xl font-bold text-white">
                             {contact.first_name[0]}{contact.last_name?.[0] || ""}
                         </div>
                         <div>
@@ -389,7 +389,7 @@ export default function ContactDetailPage() {
                             }
                         }}>
                             <DialogTrigger asChild>
-                                <Button size="sm" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-sm">
+                                <Button size="sm" className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600 shadow-sm">
                                     <ClipboardList className="mr-1.5 h-4 w-4" /> Log Outcome
                                 </Button>
                             </DialogTrigger>
@@ -423,7 +423,7 @@ export default function ContactDetailPage() {
                                                 Stay Here
                                             </Button>
                                             <Button
-                                                className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700"
+                                                className="flex-1 bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600"
                                                 onClick={() => {
                                                     setOutcomeOpen(false);
                                                     setOutcomeSaved(false);
@@ -490,7 +490,7 @@ export default function ContactDetailPage() {
                                                                 type="button"
                                                                 onClick={() => setCallbackDate(presetValue)}
                                                                 className={`rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-all ${isSelected
-                                                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                                                    ? "border-cyan-500 bg-cyan-50 text-cyan-700"
                                                                     : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
                                                                     }`}
                                                             >
@@ -503,7 +503,7 @@ export default function ContactDetailPage() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setCallbackDate("custom")}
-                                                        className="text-xs text-blue-600 hover:underline"
+                                                        className="text-xs text-cyan-600 hover:underline"
                                                     >
                                                         📅 Pick a specific date & time
                                                     </button>
@@ -572,7 +572,7 @@ export default function ContactDetailPage() {
                                                     <Label>Sale Value (€)</Label>
                                                     <Input type="number" step="0.01" placeholder="e.g. 99.00" value={saleValue} onChange={(e) => setSaleValue(e.target.value)} />
                                                     {packageSold && !saleValue && (
-                                                        <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => {
+                                                        <button type="button" className="text-xs text-cyan-600 hover:underline" onClick={() => {
                                                             const pkg = PACKAGES.find((p) => p.name === packageSold);
                                                             if (pkg) setSaleValue(pkg.price.toString());
                                                         }}>
@@ -588,7 +588,7 @@ export default function ContactDetailPage() {
                                             <Textarea placeholder="Add any additional notes..." value={outcomeNotes} onChange={(e) => setOutcomeNotes(e.target.value)} rows={3} />
                                         </div>
 
-                                        <Button onClick={handleSubmitOutcome} disabled={outcomeSaving} className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700">
+                                        <Button onClick={handleSubmitOutcome} disabled={outcomeSaving} className="w-full bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600">
                                             {outcomeSaving ? "Saving..." : "Save Outcome"}
                                         </Button>
                                     </div>
@@ -632,12 +632,12 @@ export default function ContactDetailPage() {
                                     {contact.company_name && <InfoRow icon={<Building2 className="h-4 w-4" />} label="Company" value={contact.company_name} />}
                                     {contact.location && <InfoRow icon={<MapPin className="h-4 w-4" />} label="Location" value={contact.location} />}
                                     {contact.linkedin_url && (
-                                        <a href={toLinkedInProfileUrl(contact.linkedin_url)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-blue-600 hover:underline">
+                                        <a href={toLinkedInProfileUrl(contact.linkedin_url)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-cyan-600 hover:underline">
                                             <Linkedin className="h-4 w-4" /> LinkedIn Profile
                                         </a>
                                     )}
                                     {contact.website && (
-                                        <a href={contact.website.startsWith("http") ? contact.website : `https://${contact.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-blue-600 hover:underline">
+                                        <a href={contact.website.startsWith("http") ? contact.website : `https://${contact.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-cyan-600 hover:underline">
                                             <Globe className="h-4 w-4" /> Website
                                         </a>
                                     )}
@@ -819,7 +819,7 @@ export default function ContactDetailPage() {
                                                 {activities.map((a) => (
                                                     <div key={a.id} className="flex items-start gap-4 pl-1">
                                                         <div className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white border border-slate-200">
-                                                            {a.type === "call" && <PhoneCall className="h-3.5 w-3.5 text-blue-500" />}
+                                                            {a.type === "call" && <PhoneCall className="h-3.5 w-3.5 text-cyan-500" />}
                                                             {a.type === "email" && <Send className="h-3.5 w-3.5 text-green-500" />}
                                                             {a.type === "meeting" && <Calendar className="h-3.5 w-3.5 text-purple-500" />}
                                                             {a.type === "note" && <MessageSquare className="h-3.5 w-3.5 text-orange-500" />}

@@ -142,7 +142,7 @@ export default function CallQueuePage() {
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-semibold text-slate-900 flex items-center gap-2">
-                        <PhoneCall className="h-6 w-6 text-blue-600" />
+                        <PhoneCall className="h-6 w-6 text-cyan-600" />
                         Call Queue
                     </h1>
                     <p className="text-sm text-slate-500">
@@ -192,11 +192,11 @@ export default function CallQueuePage() {
                 </Card>
                 <Card>
                     <CardContent className="flex items-center gap-3 pt-5">
-                        <div className="rounded-full bg-blue-100 p-2.5">
-                            <PhoneCall className="h-5 w-5 text-blue-500" />
+                        <div className="rounded-full bg-cyan-100 p-2.5">
+                            <PhoneCall className="h-5 w-5 text-cyan-500" />
                         </div>
                         <div>
-                            <p className="text-2xl font-bold text-blue-600">{upcomingCount}</p>
+                            <p className="text-2xl font-bold text-cyan-600">{upcomingCount}</p>
                             <p className="text-xs text-slate-500">Upcoming</p>
                         </div>
                     </CardContent>
@@ -250,7 +250,7 @@ export default function CallQueuePage() {
                                         </div>
 
                                         {/* Avatar */}
-                                        <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white shrink-0 ${item.isPriority ? "bg-gradient-to-br from-orange-500 to-red-500" : "bg-gradient-to-br from-blue-500 to-purple-500"
+                                        <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white shrink-0 ${item.isPriority ? "bg-gradient-to-br from-orange-500 to-red-500" : "bg-gradient-to-br from-cyan-500 to-teal-500"
                                             }`}>
                                             {(item.contact.first_name?.[0] || "").toUpperCase()}
                                             {(item.contact.last_name?.[0] || "").toUpperCase()}
@@ -309,7 +309,7 @@ export default function CallQueuePage() {
                                             </Button>
                                             <Button
                                                 size="sm"
-                                                className="bg-blue-600 text-white hover:bg-blue-700 h-8 px-3"
+                                                className="bg-cyan-600 text-white hover:bg-cyan-700 h-8 px-3"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     router.push(`/contacts/${item.contact.id}`);
