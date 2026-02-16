@@ -244,7 +244,7 @@ export default function ContactDetailPage() {
             };
 
             if (selectedOutcome === "callback" || selectedOutcome === "callback_priority") {
-                callLogData.callback_date = callbackDate ? new Date(callbackDate).toISOString() : null;
+                callLogData.callback_date = callbackDate && callbackDate !== "custom" ? new Date(callbackDate).toISOString() : null;
             }
             if (selectedOutcome === "invalid") {
                 callLogData.invalid_reason = invalidReason;
@@ -292,7 +292,7 @@ export default function ContactDetailPage() {
             });
 
             if (selectedOutcome === "callback" || selectedOutcome === "callback_priority") {
-                if (callbackDate) {
+                if (callbackDate && callbackDate !== "custom") {
                     await supabase.from("reminders").insert({
                         contact_id: id,
                         title: `${selectedOutcome === "callback_priority" ? "🔥 PRIORITY: " : ""}Callback ${contact?.first_name} ${contact?.last_name}`,
@@ -468,9 +468,64 @@ export default function ContactDetailPage() {
                                         </div>
 
                                         {(selectedOutcome === "callback" || selectedOutcome === "callback_priority") && (
-                                            <div className="space-y-2">
-                                                <Label>Callback Date & Time</Label>
-                                                <Input type="datetime-local" value={callbackDate} onChange={(e) => setCallbackDate(e.target.value)} required />
+                                            <div className="space-y-3">
+                                                <Label>When to call back</Label>
+                                                <div className="grid grid-cols-3 gap-2">
+                                                    {[
+                                                        { label: "1 Day", days: 1 },
+                                                        { label: "3 Days", days: 3 },
+                                                        { label: "1 Week", days: 7 },
+                                                        { label: "2 Weeks", days: 14 },
+                                                        { label: "1 Month", days: 30 },
+                                                        { label: "3 Months", days: 90 },
+                                                    ].map((preset) => {
+                                                        const presetDate = new Date();
+                                                        presetDate.setDate(presetDate.getDate() + preset.days);
+                                                        presetDate.setHours(10, 0, 0, 0);
+                                                        const presetValue = presetDate.toISOString().slice(0, 16);
+                                                        const isSelected = callbackDate === presetValue;
+                                                        return (
+                                                            <button
+                                                                key={preset.days}
+                                                                type="button"
+                                                                onClick={() => setCallbackDate(presetValue)}
+                                                                className={`rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-all ${isSelected
+                                                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                                                    : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                                                                    }`}
+                                                            >
+                                                                {preset.label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                                <div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCallbackDate("custom")}
+                                                        className="text-xs text-blue-600 hover:underline"
+                                                    >
+                                                        📅 Pick a specific date & time
+                                                    </button>
+                                                    {(callbackDate === "custom" || (callbackDate && !["custom"].includes(callbackDate) && ![1, 3, 7, 14, 30, 90].some((d) => {
+                                                        const check = new Date();
+                                                        check.setDate(check.getDate() + d);
+                                                        check.setHours(10, 0, 0, 0);
+                                                        return callbackDate === check.toISOString().slice(0, 16);
+                                                    }))) && (
+                                                            <Input
+                                                                type="datetime-local"
+                                                                className="mt-2"
+                                                                value={callbackDate === "custom" ? "" : callbackDate}
+                                                                onChange={(e) => setCallbackDate(e.target.value)}
+                                                            />
+                                                        )}
+                                                </div>
+                                                {callbackDate && callbackDate !== "custom" && (
+                                                    <p className="text-xs text-slate-500">
+                                                        📞 Reminder set for: {new Date(callbackDate).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} at 10:00 AM
+                                                    </p>
+                                                )}
                                                 {selectedOutcome === "callback_priority" && (
                                                     <p className="text-xs text-orange-600">🔥 This will create a priority reminder</p>
                                                 )}
