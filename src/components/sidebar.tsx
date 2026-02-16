@@ -36,11 +36,11 @@ export function Sidebar() {
     return (
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-60 flex-col border-r border-slate-200 bg-white">
             {/* Logo / Brand */}
-            <div className="flex h-16 items-center gap-2 border-b border-slate-200 px-6">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900">
-                    <span className="text-sm font-bold text-white">C</span>
+            <div className="flex h-16 items-center gap-2 border-b border-slate-200 px-5">
+                <div className="flex flex-col">
+                    <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Powered by</span>
+                    <img src="/Cookied.svg" alt="Cookied" className="h-5 w-auto" />
                 </div>
-                <span className="text-lg font-semibold text-slate-900">CRM</span>
             </div>
 
             {/* Nav */}
