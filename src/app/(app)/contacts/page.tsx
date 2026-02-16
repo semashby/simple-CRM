@@ -22,7 +22,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Search, Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Contact, ContactStatus } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/types";
@@ -37,10 +37,17 @@ import { Label } from "@/components/ui/label";
 
 const PAGE_SIZE = 20;
 
+// Type for contact with callback metadata
+interface ContactWithCallback extends Contact {
+    _hasPriorityCallback?: boolean;
+    _hasDueCallback?: boolean;
+    _callbackDate?: string | null;
+}
+
 export default function ContactsPage() {
     const supabase = createClient();
     const router = useRouter();
-    const [contacts, setContacts] = useState<Contact[]>([]);
+    const [contacts, setContacts] = useState<ContactWithCallback[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [page, setPage] = useState(0);
     const [search, setSearch] = useState("");
@@ -76,7 +83,70 @@ export default function ContactsPage() {
         }
 
         const { data, count } = await query;
-        setContacts(data || []);
+        const contactsData = data || [];
+
+        // Fetch pending (not done) reminders for these contacts to identify callbacks
+        if (contactsData.length > 0) {
+            const contactIds = contactsData.map((c: Contact) => c.id);
+            const { data: reminders } = await supabase
+                .from("reminders")
+                .select("contact_id, is_priority, due_date, title")
+                .in("contact_id", contactIds)
+                .eq("is_done", false);
+
+            // Build a lookup map: contact_id -> { hasPriority, hasDue, callbackDate }
+            const callbackMap = new Map<string, { hasPriority: boolean; hasDue: boolean; callbackDate: string | null }>();
+            const now = new Date();
+
+            for (const r of reminders || []) {
+                const existing = callbackMap.get(r.contact_id) || { hasPriority: false, hasDue: false, callbackDate: null };
+                if (r.is_priority) existing.hasPriority = true;
+                if (new Date(r.due_date) <= now) existing.hasDue = true;
+                // Keep the earliest due date
+                if (!existing.callbackDate || new Date(r.due_date) < new Date(existing.callbackDate)) {
+                    existing.callbackDate = r.due_date;
+                }
+                callbackMap.set(r.contact_id, existing);
+            }
+
+            // Enrich contacts with callback metadata
+            const enriched: ContactWithCallback[] = contactsData.map((c: Contact) => {
+                const cb = callbackMap.get(c.id);
+                return {
+                    ...c,
+                    _hasPriorityCallback: cb?.hasPriority || false,
+                    _hasDueCallback: cb?.hasDue || false,
+                    _callbackDate: cb?.callbackDate || null,
+                };
+            });
+
+            // Sort: priority callbacks first, then due callbacks, then the rest
+            enriched.sort((a, b) => {
+                // Priority callbacks always first
+                if (a._hasPriorityCallback && !b._hasPriorityCallback) return -1;
+                if (!a._hasPriorityCallback && b._hasPriorityCallback) return 1;
+
+                // Due callbacks next
+                if (a._hasDueCallback && !b._hasDueCallback) return -1;
+                if (!a._hasDueCallback && b._hasDueCallback) return 1;
+
+                // Contacts with any upcoming callback next
+                if (a._callbackDate && !b._callbackDate) return -1;
+                if (!a._callbackDate && b._callbackDate) return 1;
+
+                // Sort by callback date (earliest first)
+                if (a._callbackDate && b._callbackDate) {
+                    return new Date(a._callbackDate).getTime() - new Date(b._callbackDate).getTime();
+                }
+
+                return 0;
+            });
+
+            setContacts(enriched);
+        } else {
+            setContacts(contactsData);
+        }
+
         setTotalCount(count || 0);
         setLoading(false);
     }, [page, projectId, statusFilter, search]);
@@ -109,6 +179,14 @@ export default function ContactsPage() {
     };
 
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
+    const formatCallbackDate = (d: string) => {
+        const date = new Date(d);
+        const now = new Date();
+        const isOverdue = date <= now;
+        const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        return { label, isOverdue };
+    };
 
     return (
         <div className="space-y-6">
@@ -239,55 +317,79 @@ export default function ContactsPage() {
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            <TableHead className="w-[30px]"></TableHead>
                             <TableHead>Name</TableHead>
                             <TableHead>Company</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Status</TableHead>
-                            <TableHead>Location</TableHead>
+                            <TableHead>Callback</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={5} className="text-center py-8 text-slate-400">
+                                <TableCell colSpan={6} className="text-center py-8 text-slate-400">
                                     Loading...
                                 </TableCell>
                             </TableRow>
                         ) : contacts.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={5} className="text-center py-8 text-slate-400">
+                                <TableCell colSpan={6} className="text-center py-8 text-slate-400">
                                     No contacts found
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            contacts.map((contact) => (
-                                <TableRow
-                                    key={contact.id}
-                                    className="cursor-pointer hover:bg-slate-50"
-                                    onClick={() => router.push(`/contacts/${contact.id}`)}
-                                >
-                                    <TableCell className="font-medium">
-                                        {contact.first_name} {contact.last_name}
-                                    </TableCell>
-                                    <TableCell className="text-slate-600">
-                                        {contact.company_name || "—"}
-                                    </TableCell>
-                                    <TableCell className="text-slate-500">
-                                        {contact.email || "—"}
-                                    </TableCell>
-                                    <TableCell>
-                                        <Badge
-                                            variant="secondary"
-                                            className={STATUS_CONFIG[contact.status]?.color}
-                                        >
-                                            {STATUS_CONFIG[contact.status]?.label}
-                                        </Badge>
-                                    </TableCell>
-                                    <TableCell className="text-slate-500">
-                                        {contact.location || "—"}
-                                    </TableCell>
-                                </TableRow>
-                            ))
+                            contacts.map((contact) => {
+                                const cb = contact._callbackDate ? formatCallbackDate(contact._callbackDate) : null;
+                                return (
+                                    <TableRow
+                                        key={contact.id}
+                                        className={`cursor-pointer hover:bg-slate-50 ${contact._hasPriorityCallback
+                                            ? "bg-orange-50/60 hover:bg-orange-50"
+                                            : contact._hasDueCallback
+                                                ? "bg-yellow-50/40 hover:bg-yellow-50"
+                                                : ""
+                                            }`}
+                                        onClick={() => router.push(`/contacts/${contact.id}`)}
+                                    >
+                                        {/* Priority indicator */}
+                                        <TableCell className="w-[30px] pr-0">
+                                            {contact._hasPriorityCallback ? (
+                                                <Flame className="h-4 w-4 text-orange-500" />
+                                            ) : contact._hasDueCallback ? (
+                                                <PhoneCall className="h-4 w-4 text-yellow-600" />
+                                            ) : null}
+                                        </TableCell>
+                                        <TableCell className="font-medium">
+                                            {contact.first_name} {contact.last_name}
+                                        </TableCell>
+                                        <TableCell className="text-slate-600">
+                                            {contact.company_name || "—"}
+                                        </TableCell>
+                                        <TableCell className="text-slate-500">
+                                            {contact.email || "—"}
+                                        </TableCell>
+                                        <TableCell>
+                                            <Badge
+                                                variant="secondary"
+                                                className={STATUS_CONFIG[contact.status]?.color}
+                                            >
+                                                {STATUS_CONFIG[contact.status]?.label}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                            {cb ? (
+                                                <span className={`inline-flex items-center gap-1 text-xs font-medium ${cb.isOverdue ? "text-red-600" : "text-slate-500"
+                                                    }`}>
+                                                    {cb.isOverdue ? "📞 Overdue" : `📅 ${cb.label}`}
+                                                </span>
+                                            ) : (
+                                                <span className="text-slate-300">—</span>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })
                         )}
                     </TableBody>
                 </Table>
