@@ -12,8 +12,6 @@ const PIPELINE_ORDER: ContactStatus[] = [
     "new",
     "contacted",
     "meeting_scheduled",
-    "proposal_sent",
-    "negotiation",
     "client",
     "lost",
 ];

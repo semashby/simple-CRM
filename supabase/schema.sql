@@ -8,8 +8,6 @@ CREATE TYPE contact_status AS ENUM (
   'new',
   'contacted',
   'meeting_scheduled',
-  'proposal_sent',
-  'negotiation',
   'client',
   'lost'
 );
@@ -19,7 +17,24 @@ CREATE TYPE activity_type AS ENUM (
   'email',
   'meeting',
   'note',
-  'status_change'
+  'status_change',
+  'outcome_logged'
+);
+
+CREATE TYPE call_outcome AS ENUM (
+  'callback',
+  'callback_priority',
+  'invalid',
+  'meeting_booked',
+  'sale_made'
+);
+
+CREATE TYPE invalid_reason AS ENUM (
+  'wrong_number',
+  'not_interested',
+  'duplicate',
+  'do_not_call',
+  'other'
 );
 
 -- 2. PROJECTS TABLE (Lead Lists)
@@ -80,10 +95,33 @@ CREATE TABLE reminders (
   due_date TIMESTAMPTZ NOT NULL,
   title TEXT NOT NULL,
   is_done BOOLEAN DEFAULT false,
+  is_priority BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 7. INDEXES
+-- 7. CALL LOGS TABLE
+CREATE TABLE call_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE NOT NULL,
+  outcome call_outcome NOT NULL,
+  notes TEXT,
+  -- Invalid fields
+  invalid_reason invalid_reason,
+  -- Callback fields
+  callback_date TIMESTAMPTZ,
+  -- Meeting fields
+  meeting_date TIMESTAMPTZ,
+  meeting_assigned_to UUID REFERENCES auth.users(id),
+  -- Sale fields
+  package_sold TEXT,
+  sale_value NUMERIC(10,2),
+  sold_by UUID REFERENCES auth.users(id),
+  -- Metadata
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 8. INDEXES
 CREATE INDEX idx_contacts_project ON contacts(project_id);
 CREATE INDEX idx_contacts_status ON contacts(status);
 CREATE INDEX idx_contacts_assigned ON contacts(assigned_to);
@@ -91,8 +129,10 @@ CREATE INDEX idx_notes_contact ON notes(contact_id);
 CREATE INDEX idx_activities_contact ON activities(contact_id);
 CREATE INDEX idx_reminders_contact ON reminders(contact_id);
 CREATE INDEX idx_reminders_due ON reminders(due_date) WHERE is_done = false;
+CREATE INDEX idx_call_logs_contact ON call_logs(contact_id);
+CREATE INDEX idx_call_logs_outcome ON call_logs(outcome);
 
--- 8. AUTO-UPDATE updated_at
+-- 9. AUTO-UPDATE updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -106,12 +146,13 @@ CREATE TRIGGER contacts_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
--- 9. ROW LEVEL SECURITY
+-- 10. ROW LEVEL SECURITY
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reminders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE call_logs ENABLE ROW LEVEL SECURITY;
 
 -- Allow authenticated users to do everything (team-wide access)
 CREATE POLICY "Authenticated users can manage projects"
@@ -140,6 +181,12 @@ CREATE POLICY "Authenticated users can manage activities"
 
 CREATE POLICY "Authenticated users can manage reminders"
   ON reminders FOR ALL
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can manage call_logs"
+  ON call_logs FOR ALL
   TO authenticated
   USING (true)
   WITH CHECK (true);

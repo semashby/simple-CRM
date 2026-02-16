@@ -40,9 +40,24 @@ import {
     Calendar,
     Send,
     CheckCircle2,
+    ClipboardList,
 } from "lucide-react";
-import type { Contact, Note, Activity, Reminder, ContactStatus } from "@/lib/types";
-import { STATUS_CONFIG } from "@/lib/types";
+import type {
+    Contact,
+    Note,
+    Activity,
+    Reminder,
+    ContactStatus,
+    CallOutcome,
+    CallLog,
+    InvalidReason,
+} from "@/lib/types";
+import {
+    STATUS_CONFIG,
+    OUTCOME_CONFIG,
+    PACKAGES,
+    INVALID_REASONS,
+} from "@/lib/types";
 
 export default function ContactDetailPage() {
     const { id } = useParams();
@@ -53,6 +68,7 @@ export default function ContactDetailPage() {
     const [notes, setNotes] = useState<Note[]>([]);
     const [activities, setActivities] = useState<Activity[]>([]);
     const [reminders, setReminders] = useState<Reminder[]>([]);
+    const [callLogs, setCallLogs] = useState<CallLog[]>([]);
     const [newNote, setNewNote] = useState("");
     const [editing, setEditing] = useState(false);
     const [editForm, setEditForm] = useState<Partial<Contact>>({});
@@ -62,12 +78,26 @@ export default function ContactDetailPage() {
     const [reminderTitle, setReminderTitle] = useState("");
     const [reminderDate, setReminderDate] = useState("");
 
+    // Outcome dialog
+    const [outcomeOpen, setOutcomeOpen] = useState(false);
+    const [selectedOutcome, setSelectedOutcome] = useState<CallOutcome | null>(null);
+    const [outcomeNotes, setOutcomeNotes] = useState("");
+    const [outcomeSaving, setOutcomeSaving] = useState(false);
+
+    // Outcome-specific fields
+    const [callbackDate, setCallbackDate] = useState("");
+    const [invalidReason, setInvalidReason] = useState<InvalidReason>("not_interested");
+    const [meetingDate, setMeetingDate] = useState("");
+    const [packageSold, setPackageSold] = useState("");
+    const [saleValue, setSaleValue] = useState("");
+
     const fetchAll = useCallback(async () => {
-        const [contactRes, notesRes, actRes, remRes] = await Promise.all([
+        const [contactRes, notesRes, actRes, remRes, callLogRes] = await Promise.all([
             supabase.from("contacts").select("*").eq("id", id).single(),
             supabase.from("notes").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
             supabase.from("activities").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
             supabase.from("reminders").select("*").eq("contact_id", id).order("due_date", { ascending: true }),
+            supabase.from("call_logs").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
         ]);
 
         if (contactRes.data) {
@@ -77,6 +107,7 @@ export default function ContactDetailPage() {
         setNotes(notesRes.data || []);
         setActivities(actRes.data || []);
         setReminders(remRes.data || []);
+        setCallLogs(callLogRes.data || []);
     }, [id]);
 
     useEffect(() => {
@@ -156,6 +187,119 @@ export default function ContactDetailPage() {
         fetchAll();
     };
 
+    // Reset outcome form
+    const resetOutcomeForm = () => {
+        setSelectedOutcome(null);
+        setOutcomeNotes("");
+        setCallbackDate("");
+        setInvalidReason("not_interested");
+        setMeetingDate("");
+        setPackageSold("");
+        setSaleValue("");
+    };
+
+    // Submit outcome
+    const handleSubmitOutcome = async () => {
+        if (!selectedOutcome) return;
+        setOutcomeSaving(true);
+
+        try {
+            const { data: userData } = await supabase.auth.getUser();
+            const userId = userData.user?.id;
+
+            // 1. Insert call log
+            const callLogData: Record<string, unknown> = {
+                contact_id: id,
+                outcome: selectedOutcome,
+                notes: outcomeNotes || null,
+                created_by: userId,
+            };
+
+            // Add outcome-specific fields
+            if (selectedOutcome === "callback" || selectedOutcome === "callback_priority") {
+                callLogData.callback_date = callbackDate ? new Date(callbackDate).toISOString() : null;
+            }
+            if (selectedOutcome === "invalid") {
+                callLogData.invalid_reason = invalidReason;
+            }
+            if (selectedOutcome === "meeting_booked") {
+                callLogData.meeting_date = meetingDate ? new Date(meetingDate).toISOString() : null;
+            }
+            if (selectedOutcome === "sale_made") {
+                callLogData.package_sold = packageSold || null;
+                callLogData.sale_value = saleValue ? parseFloat(saleValue) : null;
+                callLogData.sold_by = userId;
+            }
+
+            await supabase.from("call_logs").insert(callLogData);
+
+            // 2. Update contact status based on outcome
+            let newStatus: ContactStatus | null = null;
+            if (selectedOutcome === "callback" || selectedOutcome === "callback_priority") {
+                newStatus = "contacted";
+            } else if (selectedOutcome === "invalid") {
+                newStatus = "lost";
+            } else if (selectedOutcome === "meeting_booked") {
+                newStatus = "meeting_scheduled";
+            } else if (selectedOutcome === "sale_made") {
+                newStatus = "client";
+            }
+
+            if (newStatus && contact) {
+                await supabase.from("contacts").update({ status: newStatus }).eq("id", id);
+            }
+
+            // 3. Log activity
+            const outcomeLabel = OUTCOME_CONFIG[selectedOutcome].label;
+            let activityDesc = `Logged outcome: ${outcomeLabel}`;
+            if (selectedOutcome === "sale_made" && packageSold) {
+                activityDesc += ` — ${packageSold} (€${saleValue || "0"})`;
+            }
+            if (selectedOutcome === "invalid") {
+                activityDesc += ` — ${INVALID_REASONS[invalidReason]}`;
+            }
+
+            await supabase.from("activities").insert({
+                contact_id: id,
+                type: "outcome_logged",
+                description: activityDesc,
+                created_by: userId,
+            });
+
+            // 4. Create reminder for callbacks
+            if (selectedOutcome === "callback" || selectedOutcome === "callback_priority") {
+                if (callbackDate) {
+                    await supabase.from("reminders").insert({
+                        contact_id: id,
+                        title: `${selectedOutcome === "callback_priority" ? "🔥 PRIORITY: " : ""}Callback ${contact?.first_name} ${contact?.last_name}`,
+                        due_date: new Date(callbackDate).toISOString(),
+                        assigned_to: userId,
+                        is_priority: selectedOutcome === "callback_priority",
+                    });
+                }
+            }
+
+            // 5. Create reminder for meetings
+            if (selectedOutcome === "meeting_booked" && meetingDate) {
+                await supabase.from("reminders").insert({
+                    contact_id: id,
+                    title: `📅 Meeting with ${contact?.first_name} ${contact?.last_name}`,
+                    due_date: new Date(meetingDate).toISOString(),
+                    assigned_to: userId,
+                });
+            }
+
+            // Close dialog and refresh
+            setOutcomeOpen(false);
+            resetOutcomeForm();
+            fetchAll();
+        } catch (error) {
+            console.error("Error saving outcome:", error);
+        } finally {
+            setOutcomeSaving(false);
+        }
+    };
+
     if (!contact) {
         return (
             <div className="flex items-center justify-center py-20 text-slate-400">
@@ -212,9 +356,180 @@ export default function ContactDetailPage() {
                     <Button variant="outline" size="sm" onClick={() => logActivity("email", "Logged an email")}>
                         <Send className="mr-1 h-4 w-4" /> Email
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => logActivity("meeting", "Logged a meeting")}>
-                        <Calendar className="mr-1 h-4 w-4" /> Meeting
-                    </Button>
+
+                    {/* Log Outcome Button */}
+                    <Dialog open={outcomeOpen} onOpenChange={(open) => {
+                        setOutcomeOpen(open);
+                        if (!open) resetOutcomeForm();
+                    }}>
+                        <DialogTrigger asChild>
+                            <Button size="sm" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700">
+                                <ClipboardList className="mr-1 h-4 w-4" /> Log Outcome
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[500px]">
+                            <DialogHeader>
+                                <DialogTitle>Log Call Outcome</DialogTitle>
+                            </DialogHeader>
+
+                            {/* Step 1: Select Outcome */}
+                            {!selectedOutcome ? (
+                                <div className="grid grid-cols-1 gap-2 py-2">
+                                    {(Object.entries(OUTCOME_CONFIG) as [CallOutcome, typeof OUTCOME_CONFIG[CallOutcome]][]).map(
+                                        ([key, config]) => (
+                                            <button
+                                                key={key}
+                                                onClick={() => setSelectedOutcome(key)}
+                                                className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all hover:scale-[1.02] hover:shadow-md ${config.color}`}
+                                            >
+                                                <span className="text-2xl">{config.icon}</span>
+                                                <div>
+                                                    <p className="font-semibold">{config.label}</p>
+                                                    <p className="text-xs opacity-70">
+                                                        {key === "callback" && "Schedule a follow-up call"}
+                                                        {key === "callback_priority" && "Urgent follow-up needed"}
+                                                        {key === "invalid" && "Mark contact as invalid"}
+                                                        {key === "meeting_booked" && "Schedule a meeting"}
+                                                        {key === "sale_made" && "Record a sale"}
+                                                    </p>
+                                                </div>
+                                            </button>
+                                        )
+                                    )}
+                                </div>
+                            ) : (
+                                /* Step 2: Outcome-specific form */
+                                <div className="space-y-4 py-2">
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setSelectedOutcome(null)}
+                                            className="text-sm text-slate-500 hover:text-slate-700"
+                                        >
+                                            ← Back
+                                        </button>
+                                        <Badge className={OUTCOME_CONFIG[selectedOutcome].color}>
+                                            {OUTCOME_CONFIG[selectedOutcome].icon} {OUTCOME_CONFIG[selectedOutcome].label}
+                                        </Badge>
+                                    </div>
+
+                                    {/* Callback fields */}
+                                    {(selectedOutcome === "callback" || selectedOutcome === "callback_priority") && (
+                                        <div className="space-y-2">
+                                            <Label>Callback Date & Time</Label>
+                                            <Input
+                                                type="datetime-local"
+                                                value={callbackDate}
+                                                onChange={(e) => setCallbackDate(e.target.value)}
+                                                required
+                                            />
+                                            {selectedOutcome === "callback_priority" && (
+                                                <p className="text-xs text-orange-600">
+                                                    🔥 This will create a priority reminder that surfaces first
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Invalid fields */}
+                                    {selectedOutcome === "invalid" && (
+                                        <div className="space-y-2">
+                                            <Label>Reason</Label>
+                                            <Select value={invalidReason} onValueChange={(v) => setInvalidReason(v as InvalidReason)}>
+                                                <SelectTrigger>
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {(Object.entries(INVALID_REASONS) as [InvalidReason, string][]).map(
+                                                        ([key, label]) => (
+                                                            <SelectItem key={key} value={key}>
+                                                                {label}
+                                                            </SelectItem>
+                                                        )
+                                                    )}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    )}
+
+                                    {/* Meeting fields */}
+                                    {selectedOutcome === "meeting_booked" && (
+                                        <div className="space-y-2">
+                                            <Label>Meeting Date & Time</Label>
+                                            <Input
+                                                type="datetime-local"
+                                                value={meetingDate}
+                                                onChange={(e) => setMeetingDate(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* Sale fields */}
+                                    {selectedOutcome === "sale_made" && (
+                                        <div className="space-y-3">
+                                            <div className="space-y-2">
+                                                <Label>Package Sold</Label>
+                                                <Select value={packageSold} onValueChange={setPackageSold}>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Select package..." />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {PACKAGES.map((pkg) => (
+                                                            <SelectItem key={pkg.name} value={pkg.name}>
+                                                                {pkg.name} — €{pkg.price}/yr
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label>Sale Value (€)</Label>
+                                                <Input
+                                                    type="number"
+                                                    step="0.01"
+                                                    placeholder="e.g. 99.00"
+                                                    value={saleValue}
+                                                    onChange={(e) => setSaleValue(e.target.value)}
+                                                />
+                                                {packageSold && !saleValue && (
+                                                    <button
+                                                        type="button"
+                                                        className="text-xs text-blue-600 hover:underline"
+                                                        onClick={() => {
+                                                            const pkg = PACKAGES.find((p) => p.name === packageSold);
+                                                            if (pkg) setSaleValue(pkg.price.toString());
+                                                        }}
+                                                    >
+                                                        Auto-fill: €{PACKAGES.find((p) => p.name === packageSold)?.price}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Notes (all outcomes) */}
+                                    <div className="space-y-2">
+                                        <Label>Notes (optional)</Label>
+                                        <Textarea
+                                            placeholder="Add any additional notes..."
+                                            value={outcomeNotes}
+                                            onChange={(e) => setOutcomeNotes(e.target.value)}
+                                            rows={3}
+                                        />
+                                    </div>
+
+                                    {/* Submit */}
+                                    <Button
+                                        onClick={handleSubmitOutcome}
+                                        disabled={outcomeSaving}
+                                        className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700"
+                                    >
+                                        {outcomeSaving ? "Saving..." : "Save Outcome"}
+                                    </Button>
+                                </div>
+                            )}
+                        </DialogContent>
+                    </Dialog>
                 </div>
             </div>
 
@@ -300,24 +615,34 @@ export default function ContactDetailPage() {
                                 <p className="text-sm text-slate-400">No reminders</p>
                             ) : (
                                 <div className="space-y-2">
-                                    {reminders.map((r) => (
-                                        <div key={r.id} className={`flex items-center justify-between rounded-lg border p-3 ${r.is_done ? "opacity-50" : ""}`}>
-                                            <div>
-                                                <p className={`text-sm ${r.is_done ? "line-through" : "font-medium"}`}>{r.title}</p>
-                                                <p className="text-xs text-slate-500">{formatDate(r.due_date)}</p>
+                                    {/* Sort: priority first, then by date */}
+                                    {[...reminders]
+                                        .sort((a, b) => {
+                                            if (a.is_priority && !b.is_priority) return -1;
+                                            if (!a.is_priority && b.is_priority) return 1;
+                                            return 0;
+                                        })
+                                        .map((r) => (
+                                            <div key={r.id} className={`flex items-center justify-between rounded-lg border p-3 ${r.is_done ? "opacity-50" : ""} ${r.is_priority && !r.is_done ? "border-orange-300 bg-orange-50" : ""}`}>
+                                                <div>
+                                                    <p className={`text-sm ${r.is_done ? "line-through" : "font-medium"}`}>
+                                                        {r.is_priority && !r.is_done && <span className="mr-1">🔥</span>}
+                                                        {r.title}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">{formatDate(r.due_date)}</p>
+                                                </div>
+                                                <Button variant="ghost" size="sm" onClick={() => handleToggleReminder(r.id, r.is_done)}>
+                                                    <CheckCircle2 className={`h-4 w-4 ${r.is_done ? "text-green-500" : "text-slate-300"}`} />
+                                                </Button>
                                             </div>
-                                            <Button variant="ghost" size="sm" onClick={() => handleToggleReminder(r.id, r.is_done)}>
-                                                <CheckCircle2 className={`h-4 w-4 ${r.is_done ? "text-green-500" : "text-slate-300"}`} />
-                                            </Button>
-                                        </div>
-                                    ))}
+                                        ))}
                                 </div>
                             )}
                         </CardContent>
                     </Card>
                 </div>
 
-                {/* MIDDLE: Notes */}
+                {/* MIDDLE: Notes + Call Log History */}
                 <div className="space-y-6">
                     <Card>
                         <CardHeader>
@@ -353,6 +678,62 @@ export default function ContactDetailPage() {
                             )}
                         </CardContent>
                     </Card>
+
+                    {/* Call Log History */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <ClipboardList className="h-4 w-4" /> Call Log History
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            {callLogs.length === 0 ? (
+                                <p className="text-sm text-slate-400">No call logs yet</p>
+                            ) : (
+                                <div className="space-y-3">
+                                    {callLogs.map((log) => (
+                                        <div
+                                            key={log.id}
+                                            className={`rounded-lg border-2 p-3 ${OUTCOME_CONFIG[log.outcome]?.color || "border-slate-200"}`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <span>{OUTCOME_CONFIG[log.outcome]?.icon}</span>
+                                                    <span className="font-medium text-sm">
+                                                        {OUTCOME_CONFIG[log.outcome]?.label}
+                                                    </span>
+                                                </div>
+                                                <span className="text-xs text-slate-500">
+                                                    {formatDate(log.created_at)}
+                                                </span>
+                                            </div>
+                                            {/* Outcome details */}
+                                            <div className="mt-2 space-y-1 text-xs">
+                                                {log.callback_date && (
+                                                    <p>📞 Callback: {formatDate(log.callback_date)}</p>
+                                                )}
+                                                {log.invalid_reason && (
+                                                    <p>Reason: {INVALID_REASONS[log.invalid_reason as keyof typeof INVALID_REASONS] || log.invalid_reason}</p>
+                                                )}
+                                                {log.meeting_date && (
+                                                    <p>📅 Meeting: {formatDate(log.meeting_date)}</p>
+                                                )}
+                                                {log.package_sold && (
+                                                    <p>📦 Package: {log.package_sold}</p>
+                                                )}
+                                                {log.sale_value && (
+                                                    <p>💰 Value: €{Number(log.sale_value).toFixed(2)}</p>
+                                                )}
+                                                {log.notes && (
+                                                    <p className="mt-1 text-slate-600 italic">&quot;{log.notes}&quot;</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
                 </div>
 
                 {/* RIGHT: Activity Log */}
@@ -374,6 +755,7 @@ export default function ContactDetailPage() {
                                                 {a.type === "meeting" && <Calendar className="h-4 w-4 text-purple-500" />}
                                                 {a.type === "note" && <MessageSquare className="h-4 w-4 text-orange-500" />}
                                                 {a.type === "status_change" && <CheckCircle2 className="h-4 w-4 text-slate-500" />}
+                                                {a.type === "outcome_logged" && <ClipboardList className="h-4 w-4 text-indigo-500" />}
                                             </div>
                                             <div>
                                                 <p className="text-sm">{a.description}</p>
