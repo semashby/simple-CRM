@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,10 +62,27 @@ import {
     INVALID_REASONS,
 } from "@/lib/types";
 
+// Convert Sales Navigator URLs to standard LinkedIn profile URLs
+function toLinkedInProfileUrl(url: string): string {
+    // Match Sales Navigator URLs like:
+    // https://www.linkedin.com/sales/lead/ACwAA...  or /sales/people/ACwAA...
+    const salesNavMatch = url.match(/linkedin\.com\/sales\/(?:lead|people)\/([^,/?]+)/);
+    if (salesNavMatch) {
+        // Extract the member ID and build a standard profile URL
+        return `https://www.linkedin.com/in/${salesNavMatch[1]}`;
+    }
+    return url;
+}
+
 export default function ContactDetailPage() {
     const { id } = useParams();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const supabase = createClient();
+
+    // Track project_id for next-contact navigation
+    const [projectContacts, setProjectContacts] = useState<{ id: string }[]>([]);
+    const [outcomeSaved, setOutcomeSaved] = useState(false);
 
     const [contact, setContact] = useState<Contact | null>(null);
     const [notes, setNotes] = useState<Note[]>([]);
@@ -106,6 +123,16 @@ export default function ContactDetailPage() {
         if (contactRes.data) {
             setContact(contactRes.data);
             setEditForm(contactRes.data);
+
+            // Fetch sibling contacts in same project for next-contact nav
+            if (contactRes.data.project_id) {
+                const { data: siblings } = await supabase
+                    .from("contacts")
+                    .select("id")
+                    .eq("project_id", contactRes.data.project_id)
+                    .order("created_at", { ascending: true });
+                setProjectContacts(siblings || []);
+            }
         }
         setNotes(notesRes.data || []);
         setActivities(actRes.data || []);
@@ -117,19 +144,18 @@ export default function ContactDetailPage() {
         fetchAll();
     }, [fetchAll]);
 
-    const handleStatusChange = async (newStatus: string) => {
-        if (!contact) return;
-        const oldStatus = contact.status;
-        const { data: userData } = await supabase.auth.getUser();
-
-        await supabase.from("contacts").update({ status: newStatus }).eq("id", id);
-        await supabase.from("activities").insert({
-            contact_id: id,
-            type: "status_change",
-            description: `Status changed from ${STATUS_CONFIG[oldStatus]?.label} to ${STATUS_CONFIG[newStatus as ContactStatus]?.label}`,
-            created_by: userData.user?.id,
-        });
-        fetchAll();
+    // Navigate to next contact in the project
+    const goToNextContact = () => {
+        if (!contact || projectContacts.length === 0) return;
+        const currentIndex = projectContacts.findIndex((c) => c.id === contact.id);
+        // Find next contact that is NOT the current one
+        const nextIndex = (currentIndex + 1) % projectContacts.length;
+        if (projectContacts[nextIndex] && projectContacts[nextIndex].id !== contact.id) {
+            router.push(`/contacts/${projectContacts[nextIndex].id}`);
+        } else {
+            // No more contacts, go back to contacts list
+            router.push("/contacts");
+        }
     };
 
     const handleSaveEdit = async () => {
@@ -286,8 +312,8 @@ export default function ContactDetailPage() {
                 });
             }
 
-            setOutcomeOpen(false);
             resetOutcomeForm();
+            setOutcomeSaved(true);
             fetchAll();
         } catch (error) {
             console.error("Error saving outcome:", error);
@@ -347,32 +373,20 @@ export default function ContactDetailPage() {
 
                     {/* Right: Actions */}
                     <div className="flex items-center gap-2">
-                        <Select value={contact.status} onValueChange={handleStatusChange}>
-                            <SelectTrigger className="w-[160px] h-9 text-sm">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {Object.entries(STATUS_CONFIG).map(([key, val]) => (
-                                    <SelectItem key={key} value={key}>{val.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-
-                        <Separator orientation="vertical" className="h-8" />
-
                         <Button variant="outline" size="sm" onClick={() => logActivity("call", "Logged a phone call")}>
-                            <PhoneCall className="h-4 w-4" />
+                            <PhoneCall className="mr-1 h-4 w-4" /> Call
                         </Button>
                         <Button variant="outline" size="sm" onClick={() => logActivity("email", "Logged an email")}>
-                            <Send className="h-4 w-4" />
+                            <Send className="mr-1 h-4 w-4" /> Email
                         </Button>
-
-                        <Separator orientation="vertical" className="h-8" />
 
                         {/* Log Outcome Button */}
                         <Dialog open={outcomeOpen} onOpenChange={(open) => {
                             setOutcomeOpen(open);
-                            if (!open) resetOutcomeForm();
+                            if (!open) {
+                                resetOutcomeForm();
+                                setOutcomeSaved(false);
+                            }
                         }}>
                             <DialogTrigger asChild>
                                 <Button size="sm" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-sm">
@@ -387,7 +401,40 @@ export default function ContactDetailPage() {
                                     </p>
                                 </DialogHeader>
 
-                                {!selectedOutcome ? (
+                                {/* Success state with Next Contact button */}
+                                {outcomeSaved ? (
+                                    <div className="flex flex-col items-center py-6 text-center">
+                                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+                                            <CheckCircle2 className="h-8 w-8 text-green-600" />
+                                        </div>
+                                        <p className="text-lg font-semibold text-slate-800">Outcome Saved!</p>
+                                        <p className="text-sm text-slate-500 mt-1">
+                                            Status updated to <Badge className={STATUS_CONFIG[contact.status]?.color || ""}>{STATUS_CONFIG[contact.status]?.label}</Badge>
+                                        </p>
+                                        <div className="flex gap-3 mt-6 w-full">
+                                            <Button
+                                                variant="outline"
+                                                className="flex-1"
+                                                onClick={() => {
+                                                    setOutcomeOpen(false);
+                                                    setOutcomeSaved(false);
+                                                }}
+                                            >
+                                                Stay Here
+                                            </Button>
+                                            <Button
+                                                className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700"
+                                                onClick={() => {
+                                                    setOutcomeOpen(false);
+                                                    setOutcomeSaved(false);
+                                                    goToNextContact();
+                                                }}
+                                            >
+                                                Next Contact →
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : !selectedOutcome ? (
                                     <div className="grid grid-cols-1 gap-2 pt-2">
                                         {(Object.entries(OUTCOME_CONFIG) as [CallOutcome, typeof OUTCOME_CONFIG[CallOutcome]][]).map(
                                             ([key, config]) => (
@@ -530,7 +577,7 @@ export default function ContactDetailPage() {
                                     {contact.company_name && <InfoRow icon={<Building2 className="h-4 w-4" />} label="Company" value={contact.company_name} />}
                                     {contact.location && <InfoRow icon={<MapPin className="h-4 w-4" />} label="Location" value={contact.location} />}
                                     {contact.linkedin_url && (
-                                        <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-blue-600 hover:underline">
+                                        <a href={toLinkedInProfileUrl(contact.linkedin_url)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-blue-600 hover:underline">
                                             <Linkedin className="h-4 w-4" /> LinkedIn Profile
                                         </a>
                                     )}
@@ -634,10 +681,10 @@ export default function ContactDetailPage() {
                                         <div className="space-y-3">
                                             {callLogs.map((log) => (
                                                 <div key={log.id} className={`rounded-lg border-l-4 bg-white p-4 shadow-sm ${log.outcome === "sale_made" ? "border-l-green-500" :
-                                                        log.outcome === "meeting_booked" ? "border-l-purple-500" :
-                                                            log.outcome === "callback_priority" ? "border-l-orange-500" :
-                                                                log.outcome === "callback" ? "border-l-yellow-500" :
-                                                                    "border-l-red-400"
+                                                    log.outcome === "meeting_booked" ? "border-l-purple-500" :
+                                                        log.outcome === "callback_priority" ? "border-l-orange-500" :
+                                                            log.outcome === "callback" ? "border-l-yellow-500" :
+                                                                "border-l-red-400"
                                                     }`}>
                                                     <div className="flex items-center justify-between mb-2">
                                                         <div className="flex items-center gap-2">
