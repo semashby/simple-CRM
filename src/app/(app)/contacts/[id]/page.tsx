@@ -373,12 +373,7 @@ export default function ContactDetailPage() {
 
                     {/* Right: Actions */}
                     <div className="flex items-center gap-2">
-                        <Button variant="outline" size="sm" onClick={() => logActivity("call", "Logged a phone call")}>
-                            <PhoneCall className="mr-1 h-4 w-4" /> Call
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => logActivity("email", "Logged an email")}>
-                            <Send className="mr-1 h-4 w-4" /> Email
-                        </Button>
+
 
                         {/* Log Outcome Button */}
                         <Dialog open={outcomeOpen} onOpenChange={(open) => {
