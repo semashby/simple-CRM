@@ -126,6 +126,34 @@ export default function ImportPage() {
         }
     };
 
+    // Proper CSV line parser that handles quoted fields with commas
+    const parseCSVLine = (line: string, delimiter: string): string[] => {
+        const fields: string[] = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"') {
+                if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+                    // Escaped quote ("") inside a quoted field
+                    current += '"';
+                    i++;
+                } else {
+                    // Toggle quote state
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === delimiter && !inQuotes) {
+                fields.push(current.trim());
+                current = "";
+            } else {
+                current += char;
+            }
+        }
+        fields.push(current.trim());
+        return fields;
+    };
+
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -137,10 +165,8 @@ export default function ImportPage() {
             const delimiter = text.split("\n")[0].includes(";") ? ";" : ",";
             const lines = text.split("\n").filter((l) => l.trim());
 
-            const csvHeaders = lines[0].split(delimiter).map((h) => h.trim().replace(/"/g, ""));
-            const csvRows = lines.slice(1).map((line) =>
-                line.split(delimiter).map((cell) => cell.trim().replace(/"/g, ""))
-            );
+            const csvHeaders = parseCSVLine(lines[0], delimiter);
+            const csvRows = lines.slice(1).map((line) => parseCSVLine(line, delimiter));
 
             setHeaders(csvHeaders);
             setRows(csvRows);
