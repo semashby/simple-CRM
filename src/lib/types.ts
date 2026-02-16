@@ -86,6 +86,16 @@ export interface Reminder {
     created_at: string;
 }
 
+export interface Profile {
+    id: string;
+    email: string | null;
+    full_name: string | null;
+    role: string;
+    avatar_url: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
 export interface CallLog {
     id: string;
     contact_id: string;

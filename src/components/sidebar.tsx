@@ -9,6 +9,7 @@ import {
     Upload,
     LogOut,
     PhoneCall,
+    Shield,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -19,6 +20,7 @@ const navItems = [
     { href: "/call-queue", label: "Call Queue", icon: PhoneCall },
     { href: "/pipeline", label: "Pipeline", icon: Kanban },
     { href: "/import", label: "Import CSV", icon: Upload },
+    { href: "/admin", label: "Admin", icon: Shield },
 ];
 
 export function Sidebar() {
