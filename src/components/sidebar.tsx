@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
     LayoutDashboard,
     Users,
@@ -15,23 +16,46 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const navItems = [
-    { href: "/", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/contacts", label: "Contacts", icon: Users },
-    { href: "/call-queue", label: "Call Queue", icon: PhoneCall },
-    { href: "/pipeline", label: "Pipeline", icon: Kanban },
-    { href: "/import", label: "Import CSV", icon: Upload },
-    { href: "/admin", label: "Admin", icon: Shield },
+    { href: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
+    { href: "/contacts", label: "Contacts", icon: Users, adminOnly: false },
+    { href: "/call-queue", label: "Call Queue", icon: PhoneCall, adminOnly: false },
+    { href: "/pipeline", label: "Pipeline", icon: Kanban, adminOnly: false },
+    { href: "/import", label: "Import CSV", icon: Upload, adminOnly: false },
+    { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
 ];
 
 export function Sidebar() {
     const pathname = usePathname();
     const router = useRouter();
+    const [userRole, setUserRole] = useState<string>("agent");
+
+    useEffect(() => {
+        const fetchRole = async () => {
+            const supabase = createClient();
+            const { data: userData } = await supabase.auth.getUser();
+            if (userData?.user) {
+                const { data: profile } = await supabase
+                    .from("profiles")
+                    .select("role")
+                    .eq("id", userData.user.id)
+                    .single();
+                if (profile?.role) {
+                    setUserRole(profile.role);
+                }
+            }
+        };
+        fetchRole();
+    }, []);
 
     const handleLogout = async () => {
         const supabase = createClient();
         await supabase.auth.signOut();
         router.push("/login");
     };
+
+    const visibleItems = navItems.filter(
+        (item) => !item.adminOnly || userRole === "admin"
+    );
 
     return (
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-60 flex-col border-r border-slate-200 bg-white">
@@ -45,7 +69,7 @@ export function Sidebar() {
 
             {/* Nav */}
             <nav className="flex-1 space-y-1 px-3 py-4">
-                {navItems.map((item) => {
+                {visibleItems.map((item) => {
                     const isActive =
                         item.href === "/"
                             ? pathname === "/"
