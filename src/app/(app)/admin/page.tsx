@@ -30,20 +30,30 @@ import {
 } from "@/components/ui/dialog";
 import {
     Users,
-    PhoneCall,
-    Calendar,
-    DollarSign,
     Shield,
     Building2,
-    ClipboardList,
     Clock,
     Flame,
     UserPlus,
-    Settings,
+    Trash2,
+    Crown,
+    ShieldCheck,
+    User,
 } from "lucide-react";
 import type { Profile, Project, Contact, Reminder } from "@/lib/types";
-import { STATUS_CONFIG } from "@/lib/types";
 import { useRouter } from "next/navigation";
+
+const ROLE_LEVEL: Record<string, number> = {
+    agent: 1,
+    admin: 2,
+    super_admin: 3,
+};
+
+const ROLE_CONFIG: Record<string, { label: string; color: string; icon: typeof Shield }> = {
+    agent: { label: "Agent", color: "bg-slate-100 text-slate-700", icon: User },
+    admin: { label: "Admin", color: "bg-cyan-100 text-cyan-700", icon: ShieldCheck },
+    super_admin: { label: "Super Admin", color: "bg-amber-100 text-amber-700", icon: Crown },
+};
 
 interface TeamMemberStats {
     profile: Profile;
@@ -67,6 +77,8 @@ export default function AdminPage() {
     const supabase = createClient();
     const router = useRouter();
 
+    const [currentUserRole, setCurrentUserRole] = useState<string>("agent");
+    const [currentUserId, setCurrentUserId] = useState<string>("");
     const [profiles, setProfiles] = useState<Profile[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [teamStats, setTeamStats] = useState<TeamMemberStats[]>([]);
@@ -76,6 +88,9 @@ export default function AdminPage() {
     const [assignDialogOpen, setAssignDialogOpen] = useState(false);
     const [selectedProject, setSelectedProject] = useState<string>("");
     const [selectedUser, setSelectedUser] = useState<string>("");
+    const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+    const isSuperAdmin = currentUserRole === "super_admin";
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -83,6 +98,18 @@ export default function AdminPage() {
         const weekAgo = new Date();
         weekAgo.setDate(weekAgo.getDate() - 7);
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // Get current user
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData?.user) {
+            setCurrentUserId(userData.user.id);
+            const { data: myProfile } = await supabase
+                .from("profiles")
+                .select("role")
+                .eq("id", userData.user.id)
+                .single();
+            if (myProfile?.role) setCurrentUserRole(myProfile.role);
+        }
 
         // Fetch profiles
         const { data: profilesData } = await supabase
@@ -103,33 +130,28 @@ export default function AdminPage() {
         // Per-user stats
         const stats: TeamMemberStats[] = await Promise.all(
             allProfiles.map(async (profile) => {
-                // Contacts assigned
                 const { count: contactCount } = await supabase
                     .from("contacts")
                     .select("*", { count: "exact" })
                     .eq("assigned_to", profile.id);
 
-                // Total calls
                 const { count: callsTotal } = await supabase
                     .from("call_logs")
                     .select("*", { count: "exact" })
                     .eq("created_by", profile.id);
 
-                // Calls this week
                 const { count: callsThisWeek } = await supabase
                     .from("call_logs")
                     .select("*", { count: "exact" })
                     .eq("created_by", profile.id)
                     .gte("created_at", weekAgo.toISOString());
 
-                // Meetings booked
                 const { count: meetingsBooked } = await supabase
                     .from("call_logs")
                     .select("*", { count: "exact" })
                     .eq("created_by", profile.id)
                     .eq("outcome", "meeting_booked");
 
-                // Sales
                 const { data: salesData } = await supabase
                     .from("call_logs")
                     .select("sale_value")
@@ -142,14 +164,12 @@ export default function AdminPage() {
                     0
                 );
 
-                // Pending reminders
                 const { count: pendingReminders } = await supabase
                     .from("reminders")
                     .select("*", { count: "exact" })
                     .eq("assigned_to", profile.id)
                     .eq("is_done", false);
 
-                // Overdue reminders
                 const { count: overdueReminders } = await supabase
                     .from("reminders")
                     .select("*", { count: "exact" })
@@ -180,7 +200,6 @@ export default function AdminPage() {
                     .select("assigned_to", { count: "exact" })
                     .eq("project_id", project.id);
 
-                // Count per user
                 const userCounts = new Map<string, number>();
                 (contacts || []).forEach((c: { assigned_to: string | null }) => {
                     if (c.assigned_to) {
@@ -222,22 +241,18 @@ export default function AdminPage() {
         fetchData();
     }, [fetchData]);
 
+    // ─── Actions ───
     const handleBulkAssign = async () => {
         if (!selectedProject || !selectedUser) return;
-
-        // Assign all unassigned contacts in this project to the selected user
-        const { error } = await supabase
+        await supabase
             .from("contacts")
             .update({ assigned_to: selectedUser })
             .eq("project_id", selectedProject)
             .is("assigned_to", null);
-
-        if (!error) {
-            setAssignDialogOpen(false);
-            setSelectedProject("");
-            setSelectedUser("");
-            fetchData();
-        }
+        setAssignDialogOpen(false);
+        setSelectedProject("");
+        setSelectedUser("");
+        fetchData();
     };
 
     const handleAssignAllInProject = async (projectId: string, userId: string) => {
@@ -245,6 +260,29 @@ export default function AdminPage() {
             .from("contacts")
             .update({ assigned_to: userId })
             .eq("project_id", projectId);
+        fetchData();
+    };
+
+    const handleChangeRole = async (userId: string, newRole: string) => {
+        if (userId === currentUserId) return; // Can't change own role
+        await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+        fetchData();
+    };
+
+    const handleDeleteUser = async (userId: string) => {
+        if (userId === currentUserId) return;
+        // Unassign their contacts, then delete profile
+        await supabase.from("contacts").update({ assigned_to: null }).eq("assigned_to", userId);
+        await supabase.from("reminders").update({ assigned_to: null }).eq("assigned_to", userId);
+        await supabase.from("profiles").delete().eq("id", userId);
+        setDeleteConfirm(null);
+        fetchData();
+    };
+
+    const handleDeleteProject = async (projectId: string) => {
+        // Unlink contacts from project, then delete
+        await supabase.from("contacts").update({ project_id: null }).eq("project_id", projectId);
+        await supabase.from("projects").delete().eq("id", projectId);
         fetchData();
     };
 
@@ -290,49 +328,161 @@ export default function AdminPage() {
                         Team management, project assignments, and performance overview
                     </p>
                 </div>
-                <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600">
-                            <UserPlus className="mr-2 h-4 w-4" /> Assign to Project
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                        <DialogHeader>
-                            <DialogTitle>Bulk Assign Contacts</DialogTitle>
-                        </DialogHeader>
-                        <p className="text-sm text-slate-500 mb-4">
-                            Assign all <b>unassigned</b> contacts in a project to a team member.
-                        </p>
-                        <div className="space-y-4">
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Project</label>
-                                <Select value={selectedProject} onValueChange={setSelectedProject}>
-                                    <SelectTrigger><SelectValue placeholder="Select project..." /></SelectTrigger>
-                                    <SelectContent>
-                                        {projects.map((p) => (
-                                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Assign To</label>
-                                <Select value={selectedUser} onValueChange={setSelectedUser}>
-                                    <SelectTrigger><SelectValue placeholder="Select team member..." /></SelectTrigger>
-                                    <SelectContent>
-                                        {profiles.map((p) => (
-                                            <SelectItem key={p.id} value={p.id}>{p.full_name || p.email}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <Button onClick={handleBulkAssign} className="w-full" disabled={!selectedProject || !selectedUser}>
-                                Assign Unassigned Contacts
+                <div className="flex items-center gap-2">
+                    <Badge className={ROLE_CONFIG[currentUserRole]?.color || "bg-slate-100"}>
+                        {ROLE_CONFIG[currentUserRole]?.label || currentUserRole}
+                    </Badge>
+                    <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600">
+                                <UserPlus className="mr-2 h-4 w-4" /> Assign to Project
                             </Button>
-                        </div>
-                    </DialogContent>
-                </Dialog>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogHeader>
+                                <DialogTitle>Bulk Assign Contacts</DialogTitle>
+                            </DialogHeader>
+                            <p className="text-sm text-slate-500 mb-4">
+                                Assign all <b>unassigned</b> contacts in a project to a team member.
+                            </p>
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Project</label>
+                                    <Select value={selectedProject} onValueChange={setSelectedProject}>
+                                        <SelectTrigger><SelectValue placeholder="Select project..." /></SelectTrigger>
+                                        <SelectContent>
+                                            {projects.map((p) => (
+                                                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Assign To</label>
+                                    <Select value={selectedUser} onValueChange={setSelectedUser}>
+                                        <SelectTrigger><SelectValue placeholder="Select team member..." /></SelectTrigger>
+                                        <SelectContent>
+                                            {profiles.map((p) => (
+                                                <SelectItem key={p.id} value={p.id}>{p.full_name || p.email}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <Button onClick={handleBulkAssign} className="w-full" disabled={!selectedProject || !selectedUser}>
+                                    Assign Unassigned Contacts
+                                </Button>
+                            </div>
+                        </DialogContent>
+                    </Dialog>
+                </div>
             </div>
+
+            {/* ─── User Management (Super Admin Only) ─── */}
+            {isSuperAdmin && (
+                <Card className="border-amber-200 bg-amber-50/30">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                            <Crown className="h-4 w-4 text-amber-600" />
+                            User Management
+                            <Badge className="bg-amber-100 text-amber-700 text-[10px] ml-2">Super Admin Only</Badge>
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>User</TableHead>
+                                    <TableHead>Email</TableHead>
+                                    <TableHead>Current Role</TableHead>
+                                    <TableHead>Change Role</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {profiles.map((profile) => {
+                                    const roleConfig = ROLE_CONFIG[profile.role] || ROLE_CONFIG.agent;
+                                    const RoleIcon = roleConfig.icon;
+                                    const isMe = profile.id === currentUserId;
+                                    return (
+                                        <TableRow key={profile.id} className={isMe ? "bg-cyan-50/50" : ""}>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-teal-500 text-xs font-bold text-white">
+                                                        {(profile.full_name || profile.email || "?")[0].toUpperCase()}
+                                                    </div>
+                                                    <span className="font-medium text-sm">
+                                                        {profile.full_name || "No name"}
+                                                        {isMe && <span className="text-xs text-slate-400 ml-1">(you)</span>}
+                                                    </span>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-sm text-slate-500">{profile.email}</TableCell>
+                                            <TableCell>
+                                                <Badge className={`${roleConfig.color} text-xs`}>
+                                                    <RoleIcon className="h-3 w-3 mr-1" />
+                                                    {roleConfig.label}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                {isMe ? (
+                                                    <span className="text-xs text-slate-400">—</span>
+                                                ) : (
+                                                    <Select
+                                                        value={profile.role}
+                                                        onValueChange={(newRole) => handleChangeRole(profile.id, newRole)}
+                                                    >
+                                                        <SelectTrigger className="h-8 w-[140px] text-xs">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="agent" className="text-xs">Agent</SelectItem>
+                                                            <SelectItem value="admin" className="text-xs">Admin</SelectItem>
+                                                            <SelectItem value="super_admin" className="text-xs">Super Admin</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                {isMe ? (
+                                                    <span className="text-xs text-slate-400">—</span>
+                                                ) : deleteConfirm === profile.id ? (
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        <Button
+                                                            size="sm"
+                                                            variant="destructive"
+                                                            className="h-7 text-xs"
+                                                            onClick={() => handleDeleteUser(profile.id)}
+                                                        >
+                                                            Confirm
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="h-7 text-xs"
+                                                            onClick={() => setDeleteConfirm(null)}
+                                                        >
+                                                            Cancel
+                                                        </Button>
+                                                    </div>
+                                                ) : (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                        onClick={() => setDeleteConfirm(profile.id)}
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
+                            </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* ─── Team Performance Table ─── */}
             <Card>
@@ -365,54 +515,57 @@ export default function AdminPage() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {teamStats.map((member) => (
-                                    <TableRow key={member.profile.id}>
-                                        <TableCell>
-                                            <div className="flex items-center gap-3">
-                                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-teal-500 text-xs font-bold text-white">
-                                                    {(member.profile.full_name || member.profile.email || "?")[0].toUpperCase()}
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium text-sm">{member.profile.full_name || member.profile.email}</p>
-                                                    <p className="text-xs text-slate-400">{member.profile.email}</p>
-                                                </div>
-                                                <Badge variant="secondary" className="text-[10px]">
-                                                    {member.profile.role}
-                                                </Badge>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-center font-medium">{member.contactCount}</TableCell>
-                                        <TableCell className="text-center">
-                                            <span className="font-bold text-cyan-600">{member.callsThisWeek}</span>
-                                        </TableCell>
-                                        <TableCell className="text-center text-slate-500">{member.callsTotal}</TableCell>
-                                        <TableCell className="text-center">
-                                            <span className={member.meetingsBooked > 0 ? "font-bold text-teal-600" : "text-slate-400"}>
-                                                {member.meetingsBooked}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-center">
-                                            <span className={member.salesMade > 0 ? "font-bold text-green-600" : "text-slate-400"}>
-                                                {member.salesMade}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-center">
-                                            <span className={member.revenue > 0 ? "font-bold text-emerald-600" : "text-slate-400"}>
-                                                €{member.revenue.toLocaleString()}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-center">
-                                            <div className="flex items-center justify-center gap-1.5">
-                                                <span className="text-sm">{member.pendingReminders}</span>
-                                                {member.overdueReminders > 0 && (
-                                                    <Badge variant="destructive" className="text-[10px] px-1.5">
-                                                        {member.overdueReminders} overdue
+                                {teamStats.map((member) => {
+                                    const roleConfig = ROLE_CONFIG[member.profile.role] || ROLE_CONFIG.agent;
+                                    return (
+                                        <TableRow key={member.profile.id}>
+                                            <TableCell>
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-teal-500 text-xs font-bold text-white">
+                                                        {(member.profile.full_name || member.profile.email || "?")[0].toUpperCase()}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-medium text-sm">{member.profile.full_name || member.profile.email}</p>
+                                                        <p className="text-xs text-slate-400">{member.profile.email}</p>
+                                                    </div>
+                                                    <Badge className={`${roleConfig.color} text-[10px]`}>
+                                                        {roleConfig.label}
                                                     </Badge>
-                                                )}
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-center font-medium">{member.contactCount}</TableCell>
+                                            <TableCell className="text-center">
+                                                <span className="font-bold text-cyan-600">{member.callsThisWeek}</span>
+                                            </TableCell>
+                                            <TableCell className="text-center text-slate-500">{member.callsTotal}</TableCell>
+                                            <TableCell className="text-center">
+                                                <span className={member.meetingsBooked > 0 ? "font-bold text-teal-600" : "text-slate-400"}>
+                                                    {member.meetingsBooked}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                <span className={member.salesMade > 0 ? "font-bold text-green-600" : "text-slate-400"}>
+                                                    {member.salesMade}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                <span className={member.revenue > 0 ? "font-bold text-emerald-600" : "text-slate-400"}>
+                                                    €{member.revenue.toLocaleString()}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                <div className="flex items-center justify-center gap-1.5">
+                                                    <span className="text-sm">{member.pendingReminders}</span>
+                                                    {member.overdueReminders > 0 && (
+                                                        <Badge variant="destructive" className="text-[10px] px-1.5">
+                                                            {member.overdueReminders} overdue
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                     )}
@@ -441,6 +594,16 @@ export default function AdminPage() {
                                                 <p className="font-semibold text-sm">{pa.project.name}</p>
                                                 <p className="text-xs text-slate-400">{pa.contactCount} contacts</p>
                                             </div>
+                                            {isSuperAdmin && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                    onClick={() => handleDeleteProject(pa.project.id)}
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                                                </Button>
+                                            )}
                                         </div>
                                         {pa.assignedUsers.length > 0 ? (
                                             <div className="flex flex-wrap gap-2">
@@ -453,7 +616,6 @@ export default function AdminPage() {
                                         ) : (
                                             <p className="text-xs text-slate-400 italic">No contacts assigned yet</p>
                                         )}
-                                        {/* Quick assign dropdown */}
                                         {profiles.length > 0 && (
                                             <div className="mt-3 flex items-center gap-2">
                                                 <Select onValueChange={(userId) => handleAssignAllInProject(pa.project.id, userId)}>

@@ -33,6 +33,8 @@ import {
 } from "lucide-react";
 import type { Project } from "@/lib/types";
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Shield } from "lucide-react";
 
 // Column mapping for auto-detection
 const KNOWN_MAPPINGS: Record<string, string> = {
@@ -82,7 +84,10 @@ type Step = "select-project" | "upload" | "map" | "importing" | "done";
 export default function ImportPage() {
     const supabase = createClient();
     const fileRef = useRef<HTMLInputElement>(null);
+    const router = useRouter();
 
+    const [roleChecked, setRoleChecked] = useState(false);
+    const [hasAccess, setHasAccess] = useState(false);
     const [step, setStep] = useState<Step>("select-project");
     const [projects, setProjects] = useState<Project[]>([]);
     const [selectedProject, setSelectedProject] = useState("");
@@ -101,12 +106,53 @@ export default function ImportPage() {
     const [importing, setImporting] = useState(false);
 
     useEffect(() => {
-        const fetchProjects = async () => {
+        const init = async () => {
+            // Check role
+            const { data: userData } = await supabase.auth.getUser();
+            if (userData?.user) {
+                const { data: profile } = await supabase
+                    .from("profiles")
+                    .select("role")
+                    .eq("id", userData.user.id)
+                    .single();
+                if (profile?.role === "super_admin") {
+                    setHasAccess(true);
+                }
+            }
+            setRoleChecked(true);
+
+            // Fetch projects
             const { data } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
             if (data) setProjects(data);
         };
-        fetchProjects();
+        init();
     }, []);
+
+    // Access guard
+    if (!roleChecked) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <p className="text-slate-400">Checking access...</p>
+            </div>
+        );
+    }
+
+    if (!hasAccess) {
+        return (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-100 mb-4">
+                    <Shield className="h-8 w-8 text-red-500" />
+                </div>
+                <h2 className="text-xl font-semibold text-slate-800 mb-2">Access Denied</h2>
+                <p className="text-sm text-slate-500 mb-4">
+                    Only <strong>Super Admins</strong> can import and manage lead lists.
+                </p>
+                <Button variant="outline" onClick={() => router.push("/")}>
+                    Back to Dashboard
+                </Button>
+            </div>
+        );
+    }
 
     const handleCreateProject = async () => {
         if (!newProjectName) return;

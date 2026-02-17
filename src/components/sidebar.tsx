@@ -14,14 +14,28 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import type { LucideIcon } from "lucide-react";
 
-const navItems = [
-    { href: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
-    { href: "/contacts", label: "Contacts", icon: Users, adminOnly: false },
-    { href: "/call-queue", label: "Call Queue", icon: PhoneCall, adminOnly: false },
-    { href: "/pipeline", label: "Pipeline", icon: Kanban, adminOnly: false },
-    { href: "/import", label: "Import CSV", icon: Upload, adminOnly: false },
-    { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
+interface NavItem {
+    href: string;
+    label: string;
+    icon: LucideIcon;
+    minRole: "agent" | "admin" | "super_admin";
+}
+
+const ROLE_LEVEL: Record<string, number> = {
+    agent: 1,
+    admin: 2,
+    super_admin: 3,
+};
+
+const navItems: NavItem[] = [
+    { href: "/", label: "Dashboard", icon: LayoutDashboard, minRole: "agent" },
+    { href: "/contacts", label: "Contacts", icon: Users, minRole: "agent" },
+    { href: "/call-queue", label: "Call Queue", icon: PhoneCall, minRole: "agent" },
+    { href: "/pipeline", label: "Pipeline", icon: Kanban, minRole: "agent" },
+    { href: "/import", label: "Import CSV", icon: Upload, minRole: "super_admin" },
+    { href: "/admin", label: "Admin", icon: Shield, minRole: "admin" },
 ];
 
 export function Sidebar() {
@@ -53,8 +67,9 @@ export function Sidebar() {
         router.push("/login");
     };
 
+    const userLevel = ROLE_LEVEL[userRole] || 1;
     const visibleItems = navItems.filter(
-        (item) => !item.adminOnly || userRole === "admin"
+        (item) => userLevel >= ROLE_LEVEL[item.minRole]
     );
 
     return (
