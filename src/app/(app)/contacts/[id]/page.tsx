@@ -38,12 +38,15 @@ import {
     Bell,
     MessageSquare,
     PhoneCall,
+    User,
+    Info,
     Calendar,
     Send,
     CheckCircle2,
     ClipboardList,
     Pencil,
     X,
+    FileText,
 } from "lucide-react";
 import type {
     Contact,
@@ -110,6 +113,21 @@ export default function ContactDetailPage() {
     const [meetingDate, setMeetingDate] = useState("");
     const [packageSold, setPackageSold] = useState("");
     const [saleValue, setSaleValue] = useState("");
+
+    // Email & Script
+    const [emailOpen, setEmailOpen] = useState(false);
+    const [emailTemplates, setEmailTemplates] = useState<{ id: string; name: string; subject: string; body: string }[]>([]);
+    const [selectedTemplate, setSelectedTemplate] = useState("");
+    const [emailSubject, setEmailSubject] = useState("");
+    const [emailBody, setEmailBody] = useState("");
+    const [emailSending, setEmailSending] = useState(false);
+    const [emailSent, setEmailSent] = useState(false);
+    const [emailError, setEmailError] = useState("");
+    const [agentName, setAgentName] = useState("");
+
+    const [scriptOpen, setScriptOpen] = useState(false);
+    const [callScripts, setCallScripts] = useState<{ id: string; name: string; body: string }[]>([]);
+    const [activeScriptId, setActiveScriptId] = useState("");
 
     const fetchAll = useCallback(async () => {
         const [contactRes, notesRes, actRes, remRes, callLogRes] = await Promise.all([
@@ -373,6 +391,33 @@ export default function ContactDetailPage() {
 
                     {/* Right: Actions */}
                     <div className="flex items-center gap-2">
+                        {/* View Script */}
+                        <Button size="sm" variant="outline" onClick={() => setScriptOpen(true)}>
+                            <FileText className="mr-1.5 h-4 w-4" /> Script
+                        </Button>
+
+                        {/* Send Email */}
+                        {contact.email && (
+                            <Button size="sm" variant="outline" onClick={() => {
+                                setEmailOpen(true);
+                                setEmailSent(false);
+                                setEmailError("");
+                                // Fetch templates
+                                supabase.from("email_templates").select("*").order("created_at", { ascending: false }).then(({ data }: { data: any[] | null }) => {
+                                    setEmailTemplates((data as any[]) || []);
+                                });
+                                // Get agent name
+                                supabase.auth.getUser().then(({ data: userData }: { data: { user: { id: string } | null } | null }) => {
+                                    if (userData?.user) {
+                                        supabase.from("profiles").select("full_name").eq("id", userData.user.id).single().then(({ data: profile }: { data: { full_name: string } | null }) => {
+                                            setAgentName(profile?.full_name || "CRM");
+                                        });
+                                    }
+                                });
+                            }}>
+                                <Mail className="mr-1.5 h-4 w-4" /> Email
+                            </Button>
+                        )}
 
 
                         {/* Log Outcome Button */}
@@ -615,9 +660,17 @@ export default function ContactDetailPage() {
                                     </div>
                                     <div><Label className="text-xs">Email</Label><Input className="h-8 text-sm" value={editForm.email || ""} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} /></div>
                                     <div><Label className="text-xs">Phone</Label><Input className="h-8 text-sm" value={editForm.phone || ""} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} /></div>
-                                    <div><Label className="text-xs">Company</Label><Input className="h-8 text-sm" value={editForm.company_name || ""} onChange={(e) => setEditForm({ ...editForm, company_name: e.target.value })} /></div>
-                                    <div><Label className="text-xs">Function</Label><Input className="h-8 text-sm" value={editForm.function || ""} onChange={(e) => setEditForm({ ...editForm, function: e.target.value })} /></div>
-                                    <div><Label className="text-xs">Location</Label><Input className="h-8 text-sm" value={editForm.location || ""} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} /></div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div><Label className="text-xs">Company</Label><Input className="h-8 text-sm" value={editForm.company_name || ""} onChange={(e) => setEditForm({ ...editForm, company_name: e.target.value })} /></div>
+                                        <div><Label className="text-xs">Branch</Label><Input className="h-8 text-sm" value={editForm.branch || ""} onChange={(e) => setEditForm({ ...editForm, branch: e.target.value })} /></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div><Label className="text-xs">Function</Label><Input className="h-8 text-sm" value={editForm.function || ""} onChange={(e) => setEditForm({ ...editForm, function: e.target.value })} /></div>
+                                        <div><Label className="text-xs">Location</Label><Input className="h-8 text-sm" value={editForm.location || ""} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} /></div>
+                                    </div>
+                                    <div><Label className="text-xs">LinkedIn URL</Label><Input className="h-8 text-sm" value={editForm.linkedin_url || ""} onChange={(e) => setEditForm({ ...editForm, linkedin_url: e.target.value })} /></div>
+                                    <div><Label className="text-xs">Website</Label><Input className="h-8 text-sm" value={editForm.website || ""} onChange={(e) => setEditForm({ ...editForm, website: e.target.value })} /></div>
+                                    <div><Label className="text-xs">Source</Label><Input className="h-8 text-sm" value={editForm.source || ""} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })} /></div>
                                     <Button onClick={handleSaveEdit} size="sm" className="w-full">Save</Button>
                                 </div>
                             ) : (
@@ -625,7 +678,10 @@ export default function ContactDetailPage() {
                                     {contact.email && <InfoRow icon={<Mail className="h-4 w-4" />} label="Email" value={contact.email} />}
                                     {contact.phone && <InfoRow icon={<Phone className="h-4 w-4" />} label="Phone" value={contact.phone} />}
                                     {contact.company_name && <InfoRow icon={<Building2 className="h-4 w-4" />} label="Company" value={contact.company_name} />}
+                                    {contact.branch && <InfoRow icon={<Building2 className="h-4 w-4 text-slate-400" />} label="Branch" value={contact.branch} />}
+                                    {contact.function && <InfoRow icon={<User className="h-4 w-4" />} label="Function" value={contact.function} />}
                                     {contact.location && <InfoRow icon={<MapPin className="h-4 w-4" />} label="Location" value={contact.location} />}
+                                    {contact.source && <InfoRow icon={<Info className="h-4 w-4" />} label="Source" value={contact.source} />}
                                     {contact.linkedin_url && (
                                         <a href={toLinkedInProfileUrl(contact.linkedin_url)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-sm text-cyan-600 hover:underline">
                                             <Linkedin className="h-4 w-4" /> LinkedIn Profile
@@ -636,7 +692,7 @@ export default function ContactDetailPage() {
                                             <Globe className="h-4 w-4" /> Website
                                         </a>
                                     )}
-                                    {!contact.email && !contact.phone && !contact.company_name && !contact.location && !contact.linkedin_url && !contact.website && (
+                                    {!contact.email && !contact.phone && !contact.company_name && !contact.location && !contact.linkedin_url && !contact.website && !contact.branch && !contact.function && !contact.source && (
                                         <p className="text-sm text-slate-400 italic">No contact details yet</p>
                                     )}
                                 </div>
@@ -836,6 +892,198 @@ export default function ContactDetailPage() {
                     </Tabs>
                 </div>
             </div>
+            {/* ─── Send Email Dialog ─── */}
+            <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+                <DialogContent className="sm:max-w-[600px]">
+                    <DialogHeader>
+                        <DialogTitle>Send Email</DialogTitle>
+                    </DialogHeader>
+                    {emailSent ? (
+                        <div className="flex flex-col items-center justify-center py-8 text-center">
+                            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+                                <CheckCircle2 className="h-8 w-8 text-green-600" />
+                            </div>
+                            <h3 className="text-xl font-semibold text-slate-900">Email Sent!</h3>
+                            <p className="text-slate-500 mt-2">Your email has been sent successfully.</p>
+                            <Button className="mt-6" onClick={() => setEmailOpen(false)}>
+                                Close
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {emailError && (
+                                <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">
+                                    {emailError}
+                                </div>
+                            )}
+                            <div className="space-y-2">
+                                <Label>Template</Label>
+                                <Select
+                                    value={selectedTemplate}
+                                    onValueChange={(val) => {
+                                        setSelectedTemplate(val);
+                                        const tmpl = emailTemplates.find((t) => t.id === val);
+                                        if (tmpl) {
+                                            let subj = tmpl.subject;
+                                            let body = tmpl.body;
+                                            // Replace placeholders
+                                            const replacements: Record<string, string> = {
+                                                "{{first_name}}": contact?.first_name || "",
+                                                "{{last_name}}": contact?.last_name || "",
+                                                "{{company}}": contact?.company_name || "",
+                                                "{{email}}": contact?.email || "",
+                                            };
+                                            Object.entries(replacements).forEach(([key, val]) => {
+                                                subj = subj.replaceAll(key, val);
+                                                body = body.replaceAll(key, val);
+                                            });
+                                            setEmailSubject(subj);
+                                            setEmailBody(body);
+                                        }
+                                    }}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select a template..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {emailTemplates.map((t) => (
+                                            <SelectItem key={t.id} value={t.id}>
+                                                {t.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Subject</Label>
+                                <Input
+                                    value={emailSubject}
+                                    onChange={(e) => setEmailSubject(e.target.value)}
+                                    placeholder="Email subject..."
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Message</Label>
+                                <Textarea
+                                    value={emailBody}
+                                    onChange={(e) => setEmailBody(e.target.value)}
+                                    placeholder="Type your message..."
+                                    className="min-h-[200px]"
+                                />
+                            </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button variant="ghost" onClick={() => setEmailOpen(false)}>
+                                    Cancel
+                                </Button>
+                                <Button
+                                    onClick={async () => {
+                                        if (!contact?.email) return;
+                                        setEmailSending(true);
+                                        setEmailError("");
+                                        try {
+                                            const res = await fetch("/api/send-email", {
+                                                method: "POST",
+                                                headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({
+                                                    to: contact.email,
+                                                    subject: emailSubject,
+                                                    body: emailBody,
+                                                    fromName: agentName,
+                                                }),
+                                            });
+                                            const data = await res.json();
+                                            if (!res.ok) throw new Error(data.error || "Failed to send");
+
+                                            // Log activity
+                                            await supabase.from("activities").insert({
+                                                contact_id: contact.id,
+                                                type: "email",
+                                                description: `Sent email: ${emailSubject}`,
+                                                created_by: (await supabase.auth.getUser()).data.user?.id,
+                                            });
+
+                                            setEmailSent(true);
+                                            fetchAll(); // Refresh activities
+                                        } catch (err: any) {
+                                            setEmailError(err.message);
+                                        } finally {
+                                            setEmailSending(false);
+                                        }
+                                    }}
+                                    disabled={emailSending || !emailSubject || !emailBody}
+                                >
+                                    {emailSending ? (
+                                        <>Sending...</>
+                                    ) : (
+                                        <>
+                                            <Send className="mr-2 h-4 w-4" /> Send Email
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* ─── Script Viewer Dialog ─── */}
+            <Dialog open={scriptOpen} onOpenChange={setScriptOpen}>
+                <DialogContent className="sm:max-w-[500px]">
+                    <DialogHeader>
+                        <DialogTitle>Call Script</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <Select
+                            value={activeScriptId}
+                            onValueChange={(val) => {
+                                setActiveScriptId(val);
+                                if (!callScripts.length) {
+                                    supabase.from("call_scripts").select("*").order("created_at", { ascending: false }).then(({ data }: { data: any[] | null }) => {
+                                        setCallScripts((data as any[]) || []);
+                                    });
+                                }
+                            }}
+                        >
+                            <SelectTrigger>
+                                <SelectValue placeholder="Select a script..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {callScripts.map((s) => (
+                                    <SelectItem key={s.id} value={s.id}>
+                                        {s.name}
+                                    </SelectItem>
+                                ))}
+                                {callScripts.length === 0 && (
+                                    <SelectItem value="none" disabled>No scripts found</SelectItem>
+                                )}
+                            </SelectContent>
+                        </Select>
+
+                        {(() => {
+                            const script = callScripts.find(s => s.id === activeScriptId);
+                            if (!script) return <div className="py-8 text-center text-slate-400">Select a script to view</div>;
+
+                            let body = script.body;
+                            const replacements: Record<string, string> = {
+                                "{{first_name}}": contact?.first_name || "[First Name]",
+                                "{{last_name}}": contact?.last_name || "[Last Name]",
+                                "{{company}}": contact?.company_name || "[Company]",
+                                "{{email}}": contact?.email || "[Email]",
+                            };
+                            Object.entries(replacements).forEach(([key, val]) => {
+                                body = body.replaceAll(key, `<span class="bg-yellow-100 px-1 rounded font-medium text-yellow-800">${val}</span>`);
+                            });
+
+                            return (
+                                <div
+                                    className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap"
+                                    dangerouslySetInnerHTML={{ __html: body }}
+                                />
+                            );
+                        })()}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

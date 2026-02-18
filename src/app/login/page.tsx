@@ -12,6 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 export default function LoginPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [firstName, setFirstName] = useState("");
+    const [lastName, setLastName] = useState("");
     const [isSignUp, setIsSignUp] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
@@ -25,9 +27,19 @@ export default function LoginPage() {
 
         try {
             if (isSignUp) {
+                if (!firstName.trim() || !lastName.trim()) {
+                    throw new Error("First and last name are required.");
+                }
                 const { error } = await supabase.auth.signUp({
                     email,
                     password,
+                    options: {
+                        data: {
+                            first_name: firstName.trim(),
+                            last_name: lastName.trim(),
+                            full_name: `${firstName.trim()} ${lastName.trim()}`,
+                        },
+                    },
                 });
                 if (error) throw error;
                 setError("Check your email to confirm your account.");
@@ -65,6 +77,32 @@ export default function LoginPage() {
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit} className="space-y-4">
+                        {isSignUp && (
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="firstName">First Name</Label>
+                                    <Input
+                                        id="firstName"
+                                        type="text"
+                                        placeholder="John"
+                                        value={firstName}
+                                        onChange={(e) => setFirstName(e.target.value)}
+                                        required={isSignUp}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="lastName">Last Name</Label>
+                                    <Input
+                                        id="lastName"
+                                        type="text"
+                                        placeholder="Doe"
+                                        value={lastName}
+                                        onChange={(e) => setLastName(e.target.value)}
+                                        required={isSignUp}
+                                    />
+                                </div>
+                            </div>
+                        )}
                         <div className="space-y-2">
                             <Label htmlFor="email">Email</Label>
                             <Input

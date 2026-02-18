@@ -22,9 +22,9 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall } from "lucide-react";
+import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { Contact, ContactStatus } from "@/lib/types";
+import type { Contact, ContactStatus, Profile } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/types";
 import {
     Dialog,
@@ -34,6 +34,7 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const PAGE_SIZE = 20;
 
@@ -56,6 +57,14 @@ export default function ContactsPage() {
     const [addOpen, setAddOpen] = useState(false);
     const [loading, setLoading] = useState(true);
 
+    // Bulk selection
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [profiles, setProfiles] = useState<Profile[]>([]);
+    const [bulkAssignUser, setBulkAssignUser] = useState("");
+    const [bulkStatus, setBulkStatus] = useState("");
+    const [bulkDeleting, setBulkDeleting] = useState(false);
+    const [userRole, setUserRole] = useState("agent");
+
     // New contact form
     const [newContact, setNewContact] = useState({
         first_name: "",
@@ -66,6 +75,21 @@ export default function ContactsPage() {
         function: "",
     });
 
+    // Fetch profiles for assignment + check role
+    useEffect(() => {
+        const init = async () => {
+            const { data: profilesData } = await supabase.from("profiles").select("*").order("full_name");
+            if (profilesData) setProfiles(profilesData as Profile[]);
+
+            const { data: userData } = await supabase.auth.getUser();
+            if (userData?.user) {
+                const { data: profile } = await supabase.from("profiles").select("role").eq("id", userData.user.id).single();
+                if (profile?.role) setUserRole(profile.role);
+            }
+        };
+        init();
+    }, []);
+
     const fetchContacts = useCallback(async () => {
         setLoading(true);
         let query = supabase
@@ -74,7 +98,11 @@ export default function ContactsPage() {
             .order("created_at", { ascending: false })
             .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-        if (projectId !== "all") query = query.eq("project_id", projectId);
+        if (projectId === "unassigned") {
+            query = query.is("project_id", null);
+        } else if (projectId !== "all") {
+            query = query.eq("project_id", projectId);
+        }
         if (statusFilter !== "all") query = query.eq("status", statusFilter);
         if (search) {
             query = query.or(
@@ -85,7 +113,7 @@ export default function ContactsPage() {
         const { data, count } = await query;
         const contactsData = data || [];
 
-        // Fetch pending (not done) reminders for these contacts to identify callbacks
+        // Fetch pending reminders for callback metadata
         if (contactsData.length > 0) {
             const contactIds = contactsData.map((c: Contact) => c.id);
             const { data: reminders } = await supabase
@@ -94,7 +122,6 @@ export default function ContactsPage() {
                 .in("contact_id", contactIds)
                 .eq("is_done", false);
 
-            // Build a lookup map: contact_id -> { hasPriority, hasDue, callbackDate }
             const callbackMap = new Map<string, { hasPriority: boolean; hasDue: boolean; callbackDate: string | null }>();
             const now = new Date();
 
@@ -102,14 +129,12 @@ export default function ContactsPage() {
                 const existing = callbackMap.get(r.contact_id) || { hasPriority: false, hasDue: false, callbackDate: null };
                 if (r.is_priority) existing.hasPriority = true;
                 if (new Date(r.due_date) <= now) existing.hasDue = true;
-                // Keep the earliest due date
                 if (!existing.callbackDate || new Date(r.due_date) < new Date(existing.callbackDate)) {
                     existing.callbackDate = r.due_date;
                 }
                 callbackMap.set(r.contact_id, existing);
             }
 
-            // Enrich contacts with callback metadata
             const enriched: ContactWithCallback[] = contactsData.map((c: Contact) => {
                 const cb = callbackMap.get(c.id);
                 return {
@@ -120,25 +145,16 @@ export default function ContactsPage() {
                 };
             });
 
-            // Sort: priority callbacks first, then due callbacks, then the rest
             enriched.sort((a, b) => {
-                // Priority callbacks always first
                 if (a._hasPriorityCallback && !b._hasPriorityCallback) return -1;
                 if (!a._hasPriorityCallback && b._hasPriorityCallback) return 1;
-
-                // Due callbacks next
                 if (a._hasDueCallback && !b._hasDueCallback) return -1;
                 if (!a._hasDueCallback && b._hasDueCallback) return 1;
-
-                // Contacts with any upcoming callback next
                 if (a._callbackDate && !b._callbackDate) return -1;
                 if (!a._callbackDate && b._callbackDate) return 1;
-
-                // Sort by callback date (earliest first)
                 if (a._callbackDate && b._callbackDate) {
                     return new Date(a._callbackDate).getTime() - new Date(b._callbackDate).getTime();
                 }
-
                 return 0;
             });
 
@@ -178,7 +194,62 @@ export default function ContactsPage() {
         fetchContacts();
     };
 
+    // ─── Bulk actions ───
+    const toggleSelect = (id: string) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === contacts.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(contacts.map((c) => c.id)));
+        }
+    };
+
+    const clearSelection = () => {
+        setSelectedIds(new Set());
+        setBulkAssignUser("");
+        setBulkStatus("");
+    };
+
+    const handleBulkAssign = async () => {
+        if (!bulkAssignUser || selectedIds.size === 0) return;
+        const ids = Array.from(selectedIds);
+        await supabase.from("contacts").update({ assigned_to: bulkAssignUser }).in("id", ids);
+        clearSelection();
+        fetchContacts();
+    };
+
+    const handleBulkStatusChange = async () => {
+        if (!bulkStatus || selectedIds.size === 0) return;
+        const ids = Array.from(selectedIds);
+        await supabase.from("contacts").update({ status: bulkStatus }).in("id", ids);
+        clearSelection();
+        fetchContacts();
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        setBulkDeleting(true);
+        const ids = Array.from(selectedIds);
+        await supabase.from("reminders").delete().in("contact_id", ids);
+        await supabase.from("activities").delete().in("contact_id", ids);
+        await supabase.from("call_logs").delete().in("contact_id", ids);
+        await supabase.from("contacts").delete().in("id", ids);
+        clearSelection();
+        setBulkDeleting(false);
+        fetchContacts();
+    };
+
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+    const isAdmin = userRole === "admin" || userRole === "super_admin";
+    const isSuperAdmin = userRole === "super_admin";
 
     const formatCallbackDate = (d: string) => {
         const date = new Date(d);
@@ -317,6 +388,12 @@ export default function ContactsPage() {
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            <TableHead className="w-[40px]">
+                                <Checkbox
+                                    checked={contacts.length > 0 && selectedIds.size === contacts.length}
+                                    onCheckedChange={toggleSelectAll}
+                                />
+                            </TableHead>
                             <TableHead className="w-[30px]"></TableHead>
                             <TableHead>Name</TableHead>
                             <TableHead>Company</TableHead>
@@ -328,48 +405,68 @@ export default function ContactsPage() {
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="text-center py-8 text-slate-400">
+                                <TableCell colSpan={7} className="text-center py-8 text-slate-400">
                                     Loading...
                                 </TableCell>
                             </TableRow>
                         ) : contacts.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="text-center py-8 text-slate-400">
+                                <TableCell colSpan={7} className="text-center py-8 text-slate-400">
                                     No contacts found
                                 </TableCell>
                             </TableRow>
                         ) : (
                             contacts.map((contact) => {
                                 const cb = contact._callbackDate ? formatCallbackDate(contact._callbackDate) : null;
+                                const isSelected = selectedIds.has(contact.id);
                                 return (
                                     <TableRow
                                         key={contact.id}
-                                        className={`cursor-pointer hover:bg-slate-50 ${contact._hasPriorityCallback
-                                            ? "bg-orange-50/60 hover:bg-orange-50"
-                                            : contact._hasDueCallback
-                                                ? "bg-yellow-50/40 hover:bg-yellow-50"
-                                                : ""
+                                        className={`cursor-pointer hover:bg-slate-50 ${isSelected
+                                            ? "bg-cyan-50/60 hover:bg-cyan-50"
+                                            : contact._hasPriorityCallback
+                                                ? "bg-orange-50/60 hover:bg-orange-50"
+                                                : contact._hasDueCallback
+                                                    ? "bg-yellow-50/40 hover:bg-yellow-50"
+                                                    : ""
                                             }`}
-                                        onClick={() => router.push(`/contacts/${contact.id}`)}
                                     >
+                                        <TableCell className="w-[40px]" onClick={(e) => e.stopPropagation()}>
+                                            <Checkbox
+                                                checked={isSelected}
+                                                onCheckedChange={() => toggleSelect(contact.id)}
+                                            />
+                                        </TableCell>
                                         {/* Priority indicator */}
-                                        <TableCell className="w-[30px] pr-0">
+                                        <TableCell
+                                            className="w-[30px] pr-0"
+                                            onClick={() => router.push(`/contacts/${contact.id}`)}
+                                        >
                                             {contact._hasPriorityCallback ? (
                                                 <Flame className="h-4 w-4 text-orange-500" />
                                             ) : contact._hasDueCallback ? (
                                                 <PhoneCall className="h-4 w-4 text-yellow-600" />
                                             ) : null}
                                         </TableCell>
-                                        <TableCell className="font-medium">
+                                        <TableCell
+                                            className="font-medium"
+                                            onClick={() => router.push(`/contacts/${contact.id}`)}
+                                        >
                                             {contact.first_name} {contact.last_name}
                                         </TableCell>
-                                        <TableCell className="text-slate-600">
+                                        <TableCell
+                                            className="text-slate-600"
+                                            onClick={() => router.push(`/contacts/${contact.id}`)}
+                                        >
                                             {contact.company_name || "—"}
                                         </TableCell>
-                                        <TableCell className="text-slate-500">
+                                        <TableCell
+                                            className="text-slate-500"
+                                            onClick={() => router.push(`/contacts/${contact.id}`)}
+                                        >
                                             {contact.email || "—"}
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell onClick={() => router.push(`/contacts/${contact.id}`)}>
                                             <Badge
                                                 variant="secondary"
                                                 className={STATUS_CONFIG[contact.status]?.color}
@@ -377,7 +474,7 @@ export default function ContactsPage() {
                                                 {STATUS_CONFIG[contact.status]?.label}
                                             </Badge>
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell onClick={() => router.push(`/contacts/${contact.id}`)}>
                                             {cb ? (
                                                 <span className={`inline-flex items-center gap-1 text-xs font-medium ${cb.isOverdue ? "text-red-600" : "text-slate-500"
                                                     }`}>
@@ -419,6 +516,88 @@ export default function ContactsPage() {
                             <ChevronRight className="h-4 w-4" />
                         </Button>
                     </div>
+                </div>
+            )}
+
+            {/* ─── Floating Bulk Actions Bar ─── */}
+            {selectedIds.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-2xl">
+                    <span className="text-sm font-medium text-slate-700">
+                        {selectedIds.size} selected
+                    </span>
+
+                    <div className="h-5 w-px bg-slate-200" />
+
+                    {/* Assign To */}
+                    {isAdmin && (
+                        <div className="flex items-center gap-1.5">
+                            <UserPlus className="h-4 w-4 text-slate-500" />
+                            <Select value={bulkAssignUser} onValueChange={(v) => { setBulkAssignUser(v); }}>
+                                <SelectTrigger className="h-8 w-[150px] text-xs">
+                                    <SelectValue placeholder="Assign to..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {profiles.map((p) => (
+                                        <SelectItem key={p.id} value={p.id} className="text-xs">
+                                            {p.full_name || p.email}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {bulkAssignUser && (
+                                <Button size="sm" className="h-8 text-xs" onClick={handleBulkAssign}>
+                                    Apply
+                                </Button>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="h-5 w-px bg-slate-200" />
+
+                    {/* Change Status */}
+                    <div className="flex items-center gap-1.5">
+                        <ArrowRightLeft className="h-4 w-4 text-slate-500" />
+                        <Select value={bulkStatus} onValueChange={(v) => setBulkStatus(v)}>
+                            <SelectTrigger className="h-8 w-[140px] text-xs">
+                                <SelectValue placeholder="Set status..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {Object.entries(STATUS_CONFIG).map(([key, val]) => (
+                                    <SelectItem key={key} value={key} className="text-xs">
+                                        {val.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {bulkStatus && (
+                            <Button size="sm" className="h-8 text-xs" onClick={handleBulkStatusChange}>
+                                Apply
+                            </Button>
+                        )}
+                    </div>
+
+                    {/* Delete (super_admin only) */}
+                    {isSuperAdmin && (
+                        <>
+                            <div className="h-5 w-px bg-slate-200" />
+                            <Button
+                                size="sm"
+                                variant="destructive"
+                                className="h-8 text-xs"
+                                onClick={handleBulkDelete}
+                                disabled={bulkDeleting}
+                            >
+                                <Trash2 className="mr-1 h-3.5 w-3.5" />
+                                {bulkDeleting ? "Deleting..." : "Delete"}
+                            </Button>
+                        </>
+                    )}
+
+                    <div className="h-5 w-px bg-slate-200" />
+
+                    <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={clearSelection}>
+                        <X className="mr-1 h-3.5 w-3.5" /> Clear
+                    </Button>
                 </div>
             )}
         </div>

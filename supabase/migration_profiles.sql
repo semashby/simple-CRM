@@ -54,7 +54,16 @@ BEGIN
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data ->> 'full_name', NEW.email)
+    COALESCE(
+      NULLIF(
+        TRIM(
+          COALESCE(NEW.raw_user_meta_data ->> 'first_name', '') || ' ' ||
+          COALESCE(NEW.raw_user_meta_data ->> 'last_name', '')
+        ), ''
+      ),
+      NEW.raw_user_meta_data ->> 'full_name',
+      NEW.email
+    )
   );
   RETURN NEW;
 END;

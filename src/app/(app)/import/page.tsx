@@ -51,6 +51,7 @@ const KNOWN_MAPPINGS: Record<string, string> = {
     current_company_position: "function",
     company: "company_name",
     company_name: "company_name",
+    "company name": "company_name",
     current_company: "company_name",
     branch: "branch",
     industry: "branch",
@@ -94,6 +95,7 @@ export default function ImportPage() {
     const [newProjectName, setNewProjectName] = useState("");
     const [newProjectDesc, setNewProjectDesc] = useState("");
     const [creatingProject, setCreatingProject] = useState(false);
+    const [sourceName, setSourceName] = useState("");
 
     // CSV Data
     const [headers, setHeaders] = useState<string[]>([]);
@@ -166,6 +168,7 @@ export default function ImportPage() {
         if (data) {
             setProjects([data, ...projects]);
             setSelectedProject(data.id);
+            setSourceName(data.name);
             setCreatingProject(false);
             setNewProjectName("");
             setNewProjectDesc("");
@@ -249,7 +252,7 @@ export default function ImportPage() {
                         first_name: "",
                         last_name: "",
                         project_id: selectedProject || null,
-                        source: "CSV Import",
+                        source: sourceName || "CSV Import",
                         created_by: userData.user?.id || null,
                     };
 
@@ -317,17 +320,35 @@ export default function ImportPage() {
                     <CardContent className="space-y-4">
                         {!creatingProject ? (
                             <>
-                                <Select value={selectedProject} onValueChange={setSelectedProject}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Choose a project..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {projects.map((p) => (
-                                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <div className="flex gap-2">
+                                <div className="space-y-4">
+                                    <div className="space-y-2">
+                                        <Label>Select Project</Label>
+                                        <Select value={selectedProject} onValueChange={(val) => {
+                                            setSelectedProject(val);
+                                            const proj = projects.find(p => p.id === val);
+                                            if (proj) setSourceName(proj.name);
+                                        }}>
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Choose a project..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {projects.map((p) => (
+                                                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label>Source Name</Label>
+                                        <Input
+                                            value={sourceName}
+                                            onChange={(e) => setSourceName(e.target.value)}
+                                            placeholder="e.g. Conference List Q1 (Defaults to Project Name)"
+                                        />
+                                        <p className="text-xs text-slate-500">This will be shown as the 'Source' for all imported contacts.</p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 pt-2">
                                     <Button onClick={() => setStep("upload")} disabled={!selectedProject}>
                                         Continue
                                     </Button>

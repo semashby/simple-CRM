@@ -25,6 +25,7 @@ export function ProjectSelector({ value, onChange }: ProjectSelectorProps) {
             const { data } = await supabase
                 .from("projects")
                 .select("*")
+                .neq("status", "archived")
                 .order("created_at", { ascending: false });
             if (data) setProjects(data);
         };
@@ -38,6 +39,7 @@ export function ProjectSelector({ value, onChange }: ProjectSelectorProps) {
             </SelectTrigger>
             <SelectContent>
                 <SelectItem value="all">All Projects</SelectItem>
+                <SelectItem value="unassigned">Unassigned</SelectItem>
                 {projects.map((project) => (
                     <SelectItem key={project.id} value={project.id}>
                         {project.name}

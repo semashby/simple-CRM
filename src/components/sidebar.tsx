@@ -11,6 +11,8 @@ import {
     LogOut,
     PhoneCall,
     Shield,
+    Calendar,
+    FileText,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -34,6 +36,8 @@ const navItems: NavItem[] = [
     { href: "/contacts", label: "Contacts", icon: Users, minRole: "agent" },
     { href: "/call-queue", label: "Call Queue", icon: PhoneCall, minRole: "agent" },
     { href: "/pipeline", label: "Pipeline", icon: Kanban, minRole: "agent" },
+    { href: "/calendar", label: "Calendar", icon: Calendar, minRole: "agent" },
+    { href: "/templates", label: "Templates", icon: FileText, minRole: "agent" },
     { href: "/import", label: "Import CSV", icon: Upload, minRole: "super_admin" },
     { href: "/admin", label: "Admin", icon: Shield, minRole: "admin" },
 ];

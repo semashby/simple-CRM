@@ -13,6 +13,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
     Table,
     TableBody,
@@ -27,7 +29,16 @@ import {
     DialogHeader,
     DialogTitle,
     DialogTrigger,
+    DialogFooter, // Make sure to export this if not already? Wait, check ui/dialog.tsx. If not there, use standard footer div.
+    DialogDescription,
 } from "@/components/ui/dialog";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+    DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
     Users,
     Shield,
@@ -39,6 +50,10 @@ import {
     Crown,
     ShieldCheck,
     User,
+    MoreVertical,
+    Archive,
+    ArchiveRestore,
+    AlertTriangle,
 } from "lucide-react";
 import type { Profile, Project, Contact, Reminder } from "@/lib/types";
 import { useRouter } from "next/navigation";
@@ -90,7 +105,12 @@ export default function AdminPage() {
     const [selectedUser, setSelectedUser] = useState<string>("");
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
+    // Project management state
+    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+    const [deleteWithContacts, setDeleteWithContacts] = useState(false);
+
     const isSuperAdmin = currentUserRole === "super_admin";
+    const isAdmin = currentUserRole === "admin" || currentUserRole === "super_admin";
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -279,10 +299,24 @@ export default function AdminPage() {
         fetchData();
     };
 
-    const handleDeleteProject = async (projectId: string) => {
-        // Unlink contacts from project, then delete
-        await supabase.from("contacts").update({ project_id: null }).eq("project_id", projectId);
-        await supabase.from("projects").delete().eq("id", projectId);
+    const handleToggleArchive = async (project: Project) => {
+        const newStatus = project.status === "archived" ? "active" : "archived";
+        await supabase.from("projects").update({ status: newStatus }).eq("id", project.id);
+        fetchData();
+    };
+
+    const confirmDeleteProject = async () => {
+        if (!projectToDelete) return;
+
+        if (deleteWithContacts) {
+            await supabase.from("contacts").delete().eq("project_id", projectToDelete.id);
+        } else {
+            await supabase.from("contacts").update({ project_id: null }).eq("project_id", projectToDelete.id);
+        }
+
+        await supabase.from("projects").delete().eq("id", projectToDelete.id);
+        setProjectToDelete(null);
+        setDeleteWithContacts(false);
         fetchData();
     };
 
@@ -588,21 +622,43 @@ export default function AdminPage() {
                         ) : (
                             <div className="space-y-4">
                                 {projectAssignments.map((pa) => (
-                                    <div key={pa.project.id} className="rounded-lg border border-slate-100 p-4">
+                                    <div key={pa.project.id} className={`rounded-lg border p-4 ${pa.project.status === 'archived' ? 'bg-slate-50 border-slate-200' : 'border-slate-100'}`}>
                                         <div className="flex items-center justify-between mb-2">
-                                            <div>
-                                                <p className="font-semibold text-sm">{pa.project.name}</p>
-                                                <p className="text-xs text-slate-400">{pa.contactCount} contacts</p>
+                                            <div className="flex items-center gap-2">
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className={`font-semibold text-sm ${pa.project.status === 'archived' ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                                                            {pa.project.name}
+                                                        </p>
+                                                        {pa.project.status === 'archived' && <Badge variant="outline" className="text-[10px] h-4 px-1">Archived</Badge>}
+                                                    </div>
+                                                    <p className="text-xs text-slate-400">{pa.contactCount} contacts</p>
+                                                </div>
                                             </div>
-                                            {isSuperAdmin && (
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
-                                                    onClick={() => handleDeleteProject(pa.project.id)}
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
-                                                </Button>
+                                            {isAdmin && (
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button variant="ghost" className="h-8 w-8 p-0">
+                                                            <MoreVertical className="h-4 w-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end">
+                                                        <DropdownMenuItem onClick={() => handleToggleArchive(pa.project)}>
+                                                            {pa.project.status === 'archived' ? (
+                                                                <><ArchiveRestore className="mr-2 h-4 w-4" /> Restore</>
+                                                            ) : (
+                                                                <><Archive className="mr-2 h-4 w-4" /> Archive</>
+                                                            )}
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuSeparator />
+                                                        <DropdownMenuItem
+                                                            className="text-red-600 focus:text-red-600"
+                                                            onClick={() => setProjectToDelete(pa.project)}
+                                                        >
+                                                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                                        </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
                                             )}
                                         </div>
                                         {pa.assignedUsers.length > 0 ? (
@@ -616,7 +672,7 @@ export default function AdminPage() {
                                         ) : (
                                             <p className="text-xs text-slate-400 italic">No contacts assigned yet</p>
                                         )}
-                                        {profiles.length > 0 && (
+                                        {profiles.length > 0 && pa.project.status !== 'archived' && (
                                             <div className="mt-3 flex items-center gap-2">
                                                 <Select onValueChange={(userId) => handleAssignAllInProject(pa.project.id, userId)}>
                                                     <SelectTrigger className="h-7 text-xs w-[180px]">
@@ -638,6 +694,47 @@ export default function AdminPage() {
                         )}
                     </CardContent>
                 </Card>
+
+                <Dialog open={!!projectToDelete} onOpenChange={(open) => !open && setProjectToDelete(null)}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2 text-red-600">
+                                <AlertTriangle className="h-5 w-5" />
+                                Delete Project
+                            </DialogTitle>
+                            <DialogDescription>
+                                Are you sure you want to delete <b>{projectToDelete?.name}</b>?
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <div className="py-4 space-y-4">
+                            <div className="flex items-start gap-3 p-3 bg-red-50 rounded-md border border-red-100">
+                                <Checkbox
+                                    id="deleteContacts"
+                                    checked={deleteWithContacts}
+                                    onCheckedChange={(c: boolean | "indeterminate") => setDeleteWithContacts(!!c)}
+                                    className="mt-0.5 border-red-300 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600"
+                                />
+                                <div className="space-y-1">
+                                    <Label htmlFor="deleteContacts" className="text-sm font-medium text-red-900 cursor-pointer">
+                                        Also delete all contacts?
+                                    </Label>
+                                    <p className="text-xs text-red-700">
+                                        If checked, all contacts in this project will be permanently deleted.
+                                        If unchecked, they will become unassigned.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => setProjectToDelete(null)}>Cancel</Button>
+                            <Button variant="destructive" onClick={confirmDeleteProject}>
+                                {deleteWithContacts ? "Delete Project & Contacts" : "Delete Project Only"}
+                            </Button>
+                        </div>
+                    </DialogContent>
+                </Dialog>
 
                 {/* Upcoming Callbacks Across Team */}
                 <Card>
