@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ProjectSelector } from "@/components/project-selector";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,9 +23,9 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X, AlertTriangle } from "lucide-react";
+import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X, AlertTriangle, FolderOpen, Users, Phone } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { Contact, ContactStatus, Profile } from "@/lib/types";
+import type { Contact, ContactStatus, Profile, Project } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/types";
 import {
     Dialog,
@@ -53,8 +54,10 @@ export default function ContactsPage() {
     const [page, setPage] = useState(0);
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
-    const [projectId, setProjectId] = useState("all");
+    const [projectId, setProjectId] = useState("");
     const [addOpen, setAddOpen] = useState(false);
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [unassignedCount, setUnassignedCount] = useState(0);
     const [loading, setLoading] = useState(true);
 
     // Bulk selection
@@ -77,7 +80,7 @@ export default function ContactsPage() {
         function: "",
     });
 
-    // Fetch profiles for assignment + check role
+    // Fetch profiles, projects, and check role
     useEffect(() => {
         const init = async () => {
             const { data: profilesData } = await supabase.from("profiles").select("*").order("full_name");
@@ -88,11 +91,27 @@ export default function ContactsPage() {
                 const { data: profile } = await supabase.from("profiles").select("role").eq("id", userData.user.id).single();
                 if (profile?.role) setUserRole(profile.role);
             }
+
+            // Fetch projects for landing screen
+            const { data: projectsData } = await supabase
+                .from("projects")
+                .select("*")
+                .neq("status", "archived")
+                .order("created_at", { ascending: false });
+            if (projectsData) setProjects(projectsData);
+
+            // Count unassigned contacts
+            const { count: unassigned } = await supabase
+                .from("contacts")
+                .select("*", { count: "exact", head: true })
+                .is("project_id", null);
+            setUnassignedCount(unassigned || 0);
         };
         init();
     }, []);
 
     const fetchContacts = useCallback(async () => {
+        if (!projectId) return;
         setLoading(true);
         let query = supabase
             .from("contacts")
@@ -290,7 +309,6 @@ export default function ContactsPage() {
 
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
     const isAdmin = userRole === "admin" || userRole === "super_admin";
-    const isSuperAdmin = userRole === "super_admin";
 
     const formatCallbackDate = (d: string) => {
         const date = new Date(d);
@@ -300,12 +318,86 @@ export default function ContactsPage() {
         return { label, isOverdue };
     };
 
+    // ─── Project Selection Landing Screen ───
+    if (!projectId) {
+        return (
+            <div className="space-y-6">
+                <div>
+                    <h1 className="text-2xl font-semibold text-slate-900">Contacts</h1>
+                    <p className="text-sm text-slate-500">Select a list to view contacts</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {/* All contacts card */}
+                    <Card
+                        className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
+                        onClick={() => setProjectId("all")}
+                    >
+                        <CardContent className="flex items-center gap-4 p-6">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100">
+                                <Users className="h-6 w-6 text-slate-600" />
+                            </div>
+                            <div>
+                                <p className="font-semibold text-slate-900">All Contacts</p>
+                                <p className="text-sm text-slate-500">View all contacts across lists</p>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Project cards */}
+                    {projects.map((project) => (
+                        <Card
+                            key={project.id}
+                            className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
+                            onClick={() => setProjectId(project.id)}
+                        >
+                            <CardContent className="flex items-center gap-4 p-6">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-50">
+                                    <FolderOpen className="h-6 w-6 text-cyan-600" />
+                                </div>
+                                <div>
+                                    <p className="font-semibold text-slate-900">{project.name}</p>
+                                    {project.description && (
+                                        <p className="text-sm text-slate-500 line-clamp-1">{project.description}</p>
+                                    )}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    ))}
+
+                    {/* Unassigned card */}
+                    {unassignedCount > 0 && (
+                        <Card
+                            className="cursor-pointer transition-all hover:shadow-md hover:border-orange-300 border-2 border-transparent"
+                            onClick={() => setProjectId("unassigned")}
+                        >
+                            <CardContent className="flex items-center gap-4 p-6">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50">
+                                    <AlertTriangle className="h-6 w-6 text-orange-500" />
+                                </div>
+                                <div>
+                                    <p className="font-semibold text-slate-900">Unassigned</p>
+                                    <p className="text-sm text-orange-600">{unassignedCount} contacts without a list</p>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold text-slate-900">Contacts</h1>
+                    <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setProjectId("")} className="text-slate-500 hover:text-slate-900 -ml-2">
+                            ← Lists
+                        </Button>
+                        <span className="text-slate-300">/</span>
+                        <h1 className="text-2xl font-semibold text-slate-900">Contacts</h1>
+                    </div>
                     <p className="text-sm text-slate-500">
                         {totalCount} total contacts
                     </p>
@@ -424,7 +516,7 @@ export default function ContactsPage() {
                 <ProjectSelector value={projectId} onChange={(v) => { setProjectId(v); setPage(0); setClearUnassignedConfirm(false); }} />
 
                 {/* Clear All Unassigned */}
-                {projectId === "unassigned" && isSuperAdmin && (
+                {projectId === "unassigned" && isAdmin && (
                     <div className="flex items-center gap-2">
                         {clearUnassignedConfirm && !clearingUnassigned && (
                             <span className="text-xs text-red-600 font-medium flex items-center gap-1">
@@ -472,7 +564,7 @@ export default function ContactsPage() {
                             <TableHead className="w-[30px]"></TableHead>
                             <TableHead>Name</TableHead>
                             <TableHead>Company</TableHead>
-                            <TableHead>Email</TableHead>
+                            <TableHead>Phone</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Callback</TableHead>
                         </TableRow>
@@ -539,7 +631,7 @@ export default function ContactsPage() {
                                             className="text-slate-500"
                                             onClick={() => router.push(`/contacts/${contact.id}`)}
                                         >
-                                            {contact.email || "—"}
+                                            {contact.phone || "—"}
                                         </TableCell>
                                         <TableCell onClick={() => router.push(`/contacts/${contact.id}`)}>
                                             <Badge
@@ -652,7 +744,7 @@ export default function ContactsPage() {
                     </div>
 
                     {/* Delete (super_admin only) */}
-                    {isSuperAdmin && (
+                    {isAdmin && (
                         <>
                             <div className="h-5 w-px bg-slate-200" />
                             <Button
