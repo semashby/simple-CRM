@@ -58,6 +58,7 @@ export default function ContactsPage() {
     const [addOpen, setAddOpen] = useState(false);
     const [projects, setProjects] = useState<Project[]>([]);
     const [unassignedCount, setUnassignedCount] = useState(0);
+    const [projectStats, setProjectStats] = useState<Record<string, { total: number; newCount: number; callbacks: number; priority: number }>>({});
     const [loading, setLoading] = useState(true);
 
     // Bulk selection
@@ -106,6 +107,51 @@ export default function ContactsPage() {
                 .select("*", { count: "exact", head: true })
                 .is("project_id", null);
             setUnassignedCount(unassigned || 0);
+
+            // Fetch per-project stats
+            const projectIds = (projectsData || []).map((p: Project) => p.id);
+            const allProjectIds = [...projectIds, "__all__", "__unassigned__"];
+
+            const statsMap: Record<string, { total: number; newCount: number; callbacks: number; priority: number }> = {};
+
+            await Promise.all(
+                allProjectIds.map(async (pid: string) => {
+                    // Total contacts
+                    let totalQ = supabase.from("contacts").select("*", { count: "exact", head: true });
+                    if (pid === "__unassigned__") totalQ = totalQ.is("project_id", null);
+                    else if (pid !== "__all__") totalQ = totalQ.eq("project_id", pid);
+                    const { count: total } = await totalQ;
+
+                    // New/unprocessed contacts
+                    let newQ = supabase.from("contacts").select("*", { count: "exact", head: true }).eq("status", "new");
+                    if (pid === "__unassigned__") newQ = newQ.is("project_id", null);
+                    else if (pid !== "__all__") newQ = newQ.eq("project_id", pid);
+                    const { count: newCount } = await newQ;
+
+                    // Callbacks (pending reminders)
+                    let contactIdsQ = supabase.from("contacts").select("id");
+                    if (pid === "__unassigned__") contactIdsQ = contactIdsQ.is("project_id", null);
+                    else if (pid !== "__all__") contactIdsQ = contactIdsQ.eq("project_id", pid);
+                    const { data: contactsForReminders } = await contactIdsQ;
+                    const cIds = (contactsForReminders || []).map((c: { id: string }) => c.id);
+
+                    let callbacks = 0;
+                    let priority = 0;
+                    if (cIds.length > 0) {
+                        const { data: reminders } = await supabase
+                            .from("reminders")
+                            .select("is_priority")
+                            .in("contact_id", cIds.slice(0, 500))
+                            .eq("is_done", false);
+                        callbacks = reminders?.length || 0;
+                        priority = reminders?.filter((r: { is_priority: boolean }) => r.is_priority).length || 0;
+                    }
+
+                    statsMap[pid] = { total: total || 0, newCount: newCount || 0, callbacks, priority };
+                })
+            );
+
+            setProjectStats(statsMap);
         };
         init();
     }, []);
@@ -320,49 +366,83 @@ export default function ContactsPage() {
 
     // ─── Project Selection Landing Screen ───
     if (!projectId) {
+        const StatBadge = ({ label, value, color }: { label: string; value: number; color: string }) => (
+            <div className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${color}`}>
+                <span>{value}</span>
+                <span className="opacity-70">{label}</span>
+            </div>
+        );
+
         return (
             <div className="space-y-6">
                 <div>
                     <h1 className="text-2xl font-semibold text-slate-900">Contacts</h1>
                     <p className="text-sm text-slate-500">Select a list to view contacts</p>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="flex flex-col gap-3">
                     {/* All contacts card */}
                     <Card
                         className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
                         onClick={() => setProjectId("all")}
                     >
-                        <CardContent className="flex items-center gap-4 p-6">
-                            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100">
-                                <Users className="h-6 w-6 text-slate-600" />
+                        <CardContent className="flex items-center gap-4 p-5">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 shrink-0">
+                                <Users className="h-5 w-5 text-slate-600" />
                             </div>
-                            <div>
+                            <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-slate-900">All Contacts</p>
                                 <p className="text-sm text-slate-500">View all contacts across lists</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                {projectStats["__all__"] && (
+                                    <>
+                                        <StatBadge label="leads" value={projectStats["__all__"].total} color="bg-slate-100 text-slate-700" />
+                                        <StatBadge label="new" value={projectStats["__all__"].newCount} color="bg-cyan-50 text-cyan-700" />
+                                        <StatBadge label="callbacks" value={projectStats["__all__"].callbacks} color="bg-yellow-50 text-yellow-700" />
+                                        {projectStats["__all__"].priority > 0 && (
+                                            <StatBadge label="priority" value={projectStats["__all__"].priority} color="bg-orange-50 text-orange-700" />
+                                        )}
+                                    </>
+                                )}
                             </div>
                         </CardContent>
                     </Card>
 
                     {/* Project cards */}
-                    {projects.map((project) => (
-                        <Card
-                            key={project.id}
-                            className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
-                            onClick={() => setProjectId(project.id)}
-                        >
-                            <CardContent className="flex items-center gap-4 p-6">
-                                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-50">
-                                    <FolderOpen className="h-6 w-6 text-cyan-600" />
-                                </div>
-                                <div>
-                                    <p className="font-semibold text-slate-900">{project.name}</p>
-                                    {project.description && (
-                                        <p className="text-sm text-slate-500 line-clamp-1">{project.description}</p>
-                                    )}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    ))}
+                    {projects.map((project) => {
+                        const stats = projectStats[project.id];
+                        return (
+                            <Card
+                                key={project.id}
+                                className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
+                                onClick={() => setProjectId(project.id)}
+                            >
+                                <CardContent className="flex items-center gap-4 p-5">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-50 shrink-0">
+                                        <FolderOpen className="h-5 w-5 text-cyan-600" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-slate-900">{project.name}</p>
+                                        {project.description && (
+                                            <p className="text-sm text-slate-500 line-clamp-1">{project.description}</p>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {stats && (
+                                            <>
+                                                <StatBadge label="leads" value={stats.total} color="bg-slate-100 text-slate-700" />
+                                                <StatBadge label="new" value={stats.newCount} color="bg-cyan-50 text-cyan-700" />
+                                                <StatBadge label="callbacks" value={stats.callbacks} color="bg-yellow-50 text-yellow-700" />
+                                                {stats.priority > 0 && (
+                                                    <StatBadge label="priority" value={stats.priority} color="bg-orange-50 text-orange-700" />
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        );
+                    })}
 
                     {/* Unassigned card */}
                     {unassignedCount > 0 && (
@@ -370,13 +450,21 @@ export default function ContactsPage() {
                             className="cursor-pointer transition-all hover:shadow-md hover:border-orange-300 border-2 border-transparent"
                             onClick={() => setProjectId("unassigned")}
                         >
-                            <CardContent className="flex items-center gap-4 p-6">
-                                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50">
-                                    <AlertTriangle className="h-6 w-6 text-orange-500" />
+                            <CardContent className="flex items-center gap-4 p-5">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 shrink-0">
+                                    <AlertTriangle className="h-5 w-5 text-orange-500" />
                                 </div>
-                                <div>
+                                <div className="flex-1 min-w-0">
                                     <p className="font-semibold text-slate-900">Unassigned</p>
-                                    <p className="text-sm text-orange-600">{unassignedCount} contacts without a list</p>
+                                    <p className="text-sm text-orange-600">Contacts without a list</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {projectStats["__unassigned__"] && (
+                                        <>
+                                            <StatBadge label="leads" value={projectStats["__unassigned__"].total} color="bg-orange-50 text-orange-700" />
+                                            <StatBadge label="new" value={projectStats["__unassigned__"].newCount} color="bg-cyan-50 text-cyan-700" />
+                                        </>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
