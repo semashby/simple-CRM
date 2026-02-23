@@ -22,7 +22,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X } from "lucide-react";
+import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X, AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Contact, ContactStatus, Profile } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/types";
@@ -64,6 +64,8 @@ export default function ContactsPage() {
     const [bulkStatus, setBulkStatus] = useState("");
     const [bulkDeleting, setBulkDeleting] = useState(false);
     const [userRole, setUserRole] = useState("agent");
+    const [clearingUnassigned, setClearingUnassigned] = useState(false);
+    const [clearUnassignedConfirm, setClearUnassignedConfirm] = useState(false);
 
     // New contact form
     const [newContact, setNewContact] = useState({
@@ -247,6 +249,45 @@ export default function ContactsPage() {
         fetchContacts();
     };
 
+    const handleClearAllUnassigned = async () => {
+        if (!clearUnassignedConfirm) {
+            setClearUnassignedConfirm(true);
+            return;
+        }
+        setClearingUnassigned(true);
+        try {
+            // Get all unassigned contact IDs
+            const { data: unassignedContacts } = await supabase
+                .from("contacts")
+                .select("id")
+                .is("project_id", null);
+
+            if (!unassignedContacts || unassignedContacts.length === 0) {
+                setClearingUnassigned(false);
+                setClearUnassignedConfirm(false);
+                return;
+            }
+
+            const allIds = unassignedContacts.map((c: { id: string }) => c.id);
+
+            // Delete in batches of 500
+            for (let i = 0; i < allIds.length; i += 500) {
+                const batch = allIds.slice(i, i + 500);
+                await supabase.from("reminders").delete().in("contact_id", batch);
+                await supabase.from("activities").delete().in("contact_id", batch);
+                await supabase.from("call_logs").delete().in("contact_id", batch);
+                await supabase.from("contacts").delete().in("id", batch);
+            }
+
+            fetchContacts();
+        } catch (err) {
+            console.error("Failed to clear unassigned contacts:", err);
+        } finally {
+            setClearingUnassigned(false);
+            setClearUnassignedConfirm(false);
+        }
+    };
+
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
     const isAdmin = userRole === "admin" || userRole === "super_admin";
     const isSuperAdmin = userRole === "super_admin";
@@ -380,7 +421,41 @@ export default function ContactsPage() {
                         ))}
                     </SelectContent>
                 </Select>
-                <ProjectSelector value={projectId} onChange={(v) => { setProjectId(v); setPage(0); }} />
+                <ProjectSelector value={projectId} onChange={(v) => { setProjectId(v); setPage(0); setClearUnassignedConfirm(false); }} />
+
+                {/* Clear All Unassigned */}
+                {projectId === "unassigned" && isSuperAdmin && (
+                    <div className="flex items-center gap-2">
+                        {clearUnassignedConfirm && !clearingUnassigned && (
+                            <span className="text-xs text-red-600 font-medium flex items-center gap-1">
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                This will delete {totalCount} contacts permanently!
+                            </span>
+                        )}
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleClearAllUnassigned}
+                            disabled={clearingUnassigned || totalCount === 0}
+                        >
+                            <Trash2 className="mr-1.5 h-4 w-4" />
+                            {clearingUnassigned
+                                ? "Clearing..."
+                                : clearUnassignedConfirm
+                                    ? "Confirm Delete All"
+                                    : `Clear All Unassigned (${totalCount})`}
+                        </Button>
+                        {clearUnassignedConfirm && !clearingUnassigned && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setClearUnassignedConfirm(false)}
+                            >
+                                Cancel
+                            </Button>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Table */}
