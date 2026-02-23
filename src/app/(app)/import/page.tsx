@@ -36,34 +36,46 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Shield } from "lucide-react";
 
-// Column mapping for auto-detection
 const KNOWN_MAPPINGS: Record<string, string> = {
     name: "first_name",
     full_name: "first_name",
     "first name": "first_name",
+    "first name (linkedin)": "first_name",
     "last name": "last_name",
+    "last name (linkedin)": "last_name",
     email: "email",
     phone: "phone",
     phone_1: "phone",
+    "phone number (fullenrich)": "phone",
+    "all mobile phone numbers (fullenrich)": "phone",
+    "all landline or work phone numbers (fullenrich)": "phone",
     function: "function",
     title: "function",
     "job title": "function",
+    "job title (linkedin)": "function",
     current_company_position: "function",
     company: "company_name",
     company_name: "company_name",
     "company name": "company_name",
+    "company name (linkedin)": "company_name",
     current_company: "company_name",
     branch: "branch",
     industry: "branch",
+    "company industry (linkedin)": "branch",
     current_company_industry: "branch",
     linkedin: "linkedin_url",
     linkedin_url: "linkedin_url",
     profile_url: "linkedin_url",
     "linkedin url": "linkedin_url",
+    "linkedin profile url": "linkedin_url",
+    "linkedin url(fullenrich)": "linkedin_url",
     website: "website",
     website_1: "website",
+    "company website (linkedin)": "website",
+    "domain (fullenrich)": "website",
     location: "location",
     location_name: "location",
+    "location (linkedin)": "location",
 };
 
 const CRM_FIELDS = [
@@ -258,14 +270,22 @@ export default function ImportPage() {
 
                     Object.entries(mapping).forEach(([idx, field]) => {
                         if (field !== "skip") {
-                            const value = row[parseInt(idx)] || "";
+                            const value = row[parseInt(idx)] ? row[parseInt(idx)].trim() : "";
+                            if (!value) return;
+
                             // Handle full_name → split into first/last
                             if (field === "first_name" && headers[parseInt(idx)].toLowerCase().includes("name") && !headers[parseInt(idx)].toLowerCase().includes("first")) {
                                 const parts = value.split(" ");
-                                contact.first_name = parts[0] || "";
-                                contact.last_name = parts.slice(1).join(" ") || "";
+                                if (!contact.first_name) {
+                                    contact.first_name = parts[0] || "";
+                                }
+                                if (!contact.last_name && parts.length > 1) {
+                                    contact.last_name = parts.slice(1).join(" ") || "";
+                                }
                             } else {
-                                contact[field] = value;
+                                if (!contact[field]) {
+                                    contact[field] = value;
+                                }
                             }
                         }
                     });
