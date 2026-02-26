@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ProjectSelector } from "@/components/project-selector";
+import { useAccessibleProjects } from "@/hooks/use-accessible-projects";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X, AlertTriangle, FolderOpen, Users, Phone } from "lucide-react";
+import { Search, Plus, ChevronLeft, ChevronRight, Flame, PhoneCall, Trash2, UserPlus, ArrowRightLeft, X, AlertTriangle, FolderOpen, Users, Phone, Eye } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Contact, ContactStatus, Profile, Project } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/types";
@@ -59,6 +60,7 @@ export default function ContactsPage() {
     const [projects, setProjects] = useState<Project[]>([]);
     const [unassignedCount, setUnassignedCount] = useState(0);
     const [projectStats, setProjectStats] = useState<Record<string, { total: number; newCount: number; callbacks: number; priority: number }>>({});
+    const [firstContactMap, setFirstContactMap] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
 
     // Bulk selection
@@ -70,6 +72,9 @@ export default function ContactsPage() {
     const [userRole, setUserRole] = useState("agent");
     const [clearingUnassigned, setClearingUnassigned] = useState(false);
     const [clearUnassignedConfirm, setClearUnassignedConfirm] = useState(false);
+
+    const { accessibleProjectIds, loading: accessLoading } = useAccessibleProjects();
+    const isRestricted = accessibleProjectIds !== null;
 
     // New contact form
     const [newContact, setNewContact] = useState({
@@ -94,11 +99,22 @@ export default function ContactsPage() {
             }
 
             // Fetch projects for landing screen
-            const { data: projectsData } = await supabase
+            let projectQuery = supabase
                 .from("projects")
                 .select("*")
                 .neq("status", "archived")
                 .order("created_at", { ascending: false });
+
+            // Agents: filter to only their accessible projects
+            if (accessibleProjectIds !== null && accessibleProjectIds.length > 0) {
+                projectQuery = projectQuery.in("id", accessibleProjectIds);
+            } else if (accessibleProjectIds !== null && accessibleProjectIds.length === 0) {
+                setProjects([]);
+                setProjectStats({});
+                return;
+            }
+
+            const { data: projectsData } = await projectQuery;
             if (projectsData) setProjects(projectsData);
 
             // Count unassigned contacts
@@ -110,7 +126,9 @@ export default function ContactsPage() {
 
             // Fetch per-project stats
             const projectIds = (projectsData || []).map((p: Project) => p.id);
-            const allProjectIds = [...projectIds, "__all__", "__unassigned__"];
+            const allProjectIds = isRestricted
+                ? [...projectIds]
+                : [...projectIds, "__all__", "__unassigned__"];
 
             const statsMap: Record<string, { total: number; newCount: number; callbacks: number; priority: number }> = {};
 
@@ -152,9 +170,22 @@ export default function ContactsPage() {
             );
 
             setProjectStats(statsMap);
+
+            // Fetch first contact per project for direct navigation
+            const firstMap: Record<string, string> = {};
+            await Promise.all(
+                allProjectIds.map(async (pid: string) => {
+                    let q = supabase.from("contacts").select("id").order("created_at", { ascending: true }).limit(1);
+                    if (pid === "__unassigned__") q = q.is("project_id", null);
+                    else if (pid !== "__all__") q = q.eq("project_id", pid);
+                    const { data } = await q;
+                    if (data && data.length > 0) firstMap[pid] = data[0].id;
+                })
+            );
+            setFirstContactMap(firstMap);
         };
-        init();
-    }, []);
+        if (!accessLoading) init();
+    }, [accessLoading, accessibleProjectIds]);
 
     const fetchContacts = useCallback(async () => {
         if (!projectId) return;
@@ -380,33 +411,51 @@ export default function ContactsPage() {
                     <p className="text-sm text-slate-500">Select a list to view contacts</p>
                 </div>
                 <div className="flex flex-col gap-3">
-                    {/* All contacts card */}
-                    <Card
-                        className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
-                        onClick={() => setProjectId("all")}
-                    >
-                        <CardContent className="flex items-center gap-4 p-5">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 shrink-0">
-                                <Users className="h-5 w-5 text-slate-600" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-slate-900">All Contacts</p>
-                                <p className="text-sm text-slate-500">View all contacts across lists</p>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                                {projectStats["__all__"] && (
-                                    <>
-                                        <StatBadge label="leads" value={projectStats["__all__"].total} color="bg-slate-100 text-slate-700" />
-                                        <StatBadge label="new" value={projectStats["__all__"].newCount} color="bg-cyan-50 text-cyan-700" />
-                                        <StatBadge label="callbacks" value={projectStats["__all__"].callbacks} color="bg-yellow-50 text-yellow-700" />
-                                        {projectStats["__all__"].priority > 0 && (
-                                            <StatBadge label="priority" value={projectStats["__all__"].priority} color="bg-orange-50 text-orange-700" />
+                    {/* All contacts card — only for admins */}
+                    {!isRestricted && (
+                        <Card
+                            className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
+                            onClick={() => {
+                                const firstId = firstContactMap["__all__"];
+                                if (firstId) router.push(`/contacts/${firstId}`);
+                                else setProjectId("all");
+                            }}
+                        >
+                            <CardContent className="p-5">
+                                <div className="flex items-center gap-4">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 shrink-0">
+                                        <Users className="h-5 w-5 text-slate-600" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-slate-900">All Contacts</p>
+                                        <p className="text-sm text-slate-500">View all contacts across lists</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {projectStats["__all__"] && (
+                                            <>
+                                                <StatBadge label="leads" value={projectStats["__all__"].total} color="bg-slate-100 text-slate-700" />
+                                                <StatBadge label="new" value={projectStats["__all__"].newCount} color="bg-cyan-50 text-cyan-700" />
+                                                <StatBadge label="callbacks" value={projectStats["__all__"].callbacks} color="bg-yellow-50 text-yellow-700" />
+                                                {projectStats["__all__"].priority > 0 && (
+                                                    <StatBadge label="priority" value={projectStats["__all__"].priority} color="bg-orange-50 text-orange-700" />
+                                                )}
+                                            </>
                                         )}
-                                    </>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
+                                    </div>
+                                </div>
+                                <div className="mt-3 flex justify-end">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-xs gap-1.5"
+                                        onClick={(e) => { e.stopPropagation(); setProjectId("all"); }}
+                                    >
+                                        <Eye className="h-3.5 w-3.5" /> View Contacts
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
 
                     {/* Project cards */}
                     {projects.map((project) => {
@@ -415,56 +464,88 @@ export default function ContactsPage() {
                             <Card
                                 key={project.id}
                                 className="cursor-pointer transition-all hover:shadow-md hover:border-cyan-300 border-2 border-transparent"
-                                onClick={() => setProjectId(project.id)}
+                                onClick={() => {
+                                    const firstId = firstContactMap[project.id];
+                                    if (firstId) router.push(`/contacts/${firstId}`);
+                                    else setProjectId(project.id);
+                                }}
                             >
-                                <CardContent className="flex items-center gap-4 p-5">
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-50 shrink-0">
-                                        <FolderOpen className="h-5 w-5 text-cyan-600" />
+                                <CardContent className="p-5">
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-50 shrink-0">
+                                            <FolderOpen className="h-5 w-5 text-cyan-600" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-semibold text-slate-900">{project.name}</p>
+                                            {project.description && (
+                                                <p className="text-sm text-slate-500 line-clamp-1">{project.description}</p>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                            {stats && (
+                                                <>
+                                                    <StatBadge label="leads" value={stats.total} color="bg-slate-100 text-slate-700" />
+                                                    <StatBadge label="new" value={stats.newCount} color="bg-cyan-50 text-cyan-700" />
+                                                    <StatBadge label="callbacks" value={stats.callbacks} color="bg-yellow-50 text-yellow-700" />
+                                                    {stats.priority > 0 && (
+                                                        <StatBadge label="priority" value={stats.priority} color="bg-orange-50 text-orange-700" />
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-semibold text-slate-900">{project.name}</p>
-                                        {project.description && (
-                                            <p className="text-sm text-slate-500 line-clamp-1">{project.description}</p>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        {stats && (
-                                            <>
-                                                <StatBadge label="leads" value={stats.total} color="bg-slate-100 text-slate-700" />
-                                                <StatBadge label="new" value={stats.newCount} color="bg-cyan-50 text-cyan-700" />
-                                                <StatBadge label="callbacks" value={stats.callbacks} color="bg-yellow-50 text-yellow-700" />
-                                                {stats.priority > 0 && (
-                                                    <StatBadge label="priority" value={stats.priority} color="bg-orange-50 text-orange-700" />
-                                                )}
-                                            </>
-                                        )}
+                                    <div className="mt-3 flex justify-end">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-xs gap-1.5"
+                                            onClick={(e) => { e.stopPropagation(); setProjectId(project.id); }}
+                                        >
+                                            <Eye className="h-3.5 w-3.5" /> View Contacts
+                                        </Button>
                                     </div>
                                 </CardContent>
                             </Card>
                         );
                     })}
 
-                    {/* Unassigned card */}
-                    {unassignedCount > 0 && (
+                    {/* Unassigned card — only for admins */}
+                    {!isRestricted && unassignedCount > 0 && (
                         <Card
                             className="cursor-pointer transition-all hover:shadow-md hover:border-orange-300 border-2 border-transparent"
-                            onClick={() => setProjectId("unassigned")}
+                            onClick={() => {
+                                const firstId = firstContactMap["__unassigned__"];
+                                if (firstId) router.push(`/contacts/${firstId}`);
+                                else setProjectId("unassigned");
+                            }}
                         >
-                            <CardContent className="flex items-center gap-4 p-5">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 shrink-0">
-                                    <AlertTriangle className="h-5 w-5 text-orange-500" />
+                            <CardContent className="p-5">
+                                <div className="flex items-center gap-4">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 shrink-0">
+                                        <AlertTriangle className="h-5 w-5 text-orange-500" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-slate-900">Unassigned</p>
+                                        <p className="text-sm text-orange-600">Contacts without a list</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {projectStats["__unassigned__"] && (
+                                            <>
+                                                <StatBadge label="leads" value={projectStats["__unassigned__"].total} color="bg-orange-50 text-orange-700" />
+                                                <StatBadge label="new" value={projectStats["__unassigned__"].newCount} color="bg-cyan-50 text-cyan-700" />
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="font-semibold text-slate-900">Unassigned</p>
-                                    <p className="text-sm text-orange-600">Contacts without a list</p>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                    {projectStats["__unassigned__"] && (
-                                        <>
-                                            <StatBadge label="leads" value={projectStats["__unassigned__"].total} color="bg-orange-50 text-orange-700" />
-                                            <StatBadge label="new" value={projectStats["__unassigned__"].newCount} color="bg-cyan-50 text-cyan-700" />
-                                        </>
-                                    )}
+                                <div className="mt-3 flex justify-end">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-xs gap-1.5"
+                                        onClick={(e) => { e.stopPropagation(); setProjectId("unassigned"); }}
+                                    >
+                                        <Eye className="h-3.5 w-3.5" /> View Contacts
+                                    </Button>
                                 </div>
                             </CardContent>
                         </Card>
@@ -601,7 +682,7 @@ export default function ContactsPage() {
                         ))}
                     </SelectContent>
                 </Select>
-                <ProjectSelector value={projectId} onChange={(v) => { setProjectId(v); setPage(0); setClearUnassignedConfirm(false); }} />
+                <ProjectSelector value={projectId} onChange={(v) => { setProjectId(v); setPage(0); setClearUnassignedConfirm(false); }} accessibleProjectIds={accessibleProjectIds} />
 
                 {/* Clear All Unassigned */}
                 {projectId === "unassigned" && isAdmin && (

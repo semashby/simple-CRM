@@ -30,11 +30,28 @@ import {
     CheckCircle2,
     AlertCircle,
     Plus,
+    Languages,
 } from "lucide-react";
 import type { Project } from "@/lib/types";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Shield } from "lucide-react";
+
+const TRANSCRIPTION_LANGUAGES = [
+    { value: "nl-NL", label: "🇳🇱 Dutch" },
+    { value: "en-US", label: "🇺🇸 English (US)" },
+    { value: "en-GB", label: "🇬🇧 English (UK)" },
+    { value: "ar-SA", label: "🇸🇦 Arabic" },
+    { value: "fr-FR", label: "🇫🇷 French" },
+    { value: "de-DE", label: "🇩🇪 German" },
+    { value: "es-ES", label: "🇪🇸 Spanish" },
+    { value: "it-IT", label: "🇮🇹 Italian" },
+    { value: "pt-PT", label: "🇵🇹 Portuguese" },
+    { value: "zh-CN", label: "🇨🇳 Chinese" },
+    { value: "ja-JP", label: "🇯🇵 Japanese" },
+    { value: "ko-KR", label: "🇰🇷 Korean" },
+    { value: "tr-TR", label: "🇹🇷 Turkish" },
+];
 
 const KNOWN_MAPPINGS: Record<string, string> = {
     name: "first_name",
@@ -106,6 +123,7 @@ export default function ImportPage() {
     const [selectedProject, setSelectedProject] = useState("");
     const [newProjectName, setNewProjectName] = useState("");
     const [newProjectDesc, setNewProjectDesc] = useState("");
+    const [newProjectLang, setNewProjectLang] = useState("nl-NL");
     const [creatingProject, setCreatingProject] = useState(false);
     const [sourceName, setSourceName] = useState("");
 
@@ -173,7 +191,7 @@ export default function ImportPage() {
         const { data: userData } = await supabase.auth.getUser();
         const { data } = await supabase
             .from("projects")
-            .insert({ name: newProjectName, description: newProjectDesc, created_by: userData.user?.id })
+            .insert({ name: newProjectName, description: newProjectDesc, transcription_language: newProjectLang, created_by: userData.user?.id })
             .select()
             .single();
 
@@ -184,6 +202,7 @@ export default function ImportPage() {
             setCreatingProject(false);
             setNewProjectName("");
             setNewProjectDesc("");
+            setNewProjectLang("nl-NL");
         }
     };
 
@@ -386,6 +405,20 @@ export default function ImportPage() {
                                 <div className="space-y-2">
                                     <Label>Description</Label>
                                     <Textarea value={newProjectDesc} onChange={(e) => setNewProjectDesc(e.target.value)} placeholder="Optional notes about this lead list" rows={2} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label className="flex items-center gap-1.5"><Languages className="h-3.5 w-3.5" /> Transcription Language</Label>
+                                    <Select value={newProjectLang} onValueChange={setNewProjectLang}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select language..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {TRANSCRIPTION_LANGUAGES.map((lang) => (
+                                                <SelectItem key={lang.value} value={lang.value}>{lang.label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-xs text-slate-500">Call recordings for this list will be transcribed in this language.</p>
                                 </div>
                                 <div className="flex gap-2">
                                     <Button onClick={handleCreateProject} disabled={!newProjectName}>Create & Continue</Button>

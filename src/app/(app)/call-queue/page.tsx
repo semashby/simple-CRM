@@ -21,6 +21,7 @@ import type { Contact, Reminder } from "@/lib/types";
 import { STATUS_CONFIG } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { ProjectSelector } from "@/components/project-selector";
+import { useAccessibleProjects } from "@/hooks/use-accessible-projects";
 
 interface QueueContact {
     contact: Contact;
@@ -35,6 +36,14 @@ export default function CallQueuePage() {
     const [projectId, setProjectId] = useState("all");
     const [queue, setQueue] = useState<QueueContact[]>([]);
     const [loading, setLoading] = useState(true);
+    const { accessibleProjectIds, loading: accessLoading } = useAccessibleProjects();
+
+    // Default agents to first accessible project
+    useEffect(() => {
+        if (!accessLoading && accessibleProjectIds !== null && accessibleProjectIds.length > 0) {
+            setProjectId(accessibleProjectIds[0]);
+        }
+    }, [accessLoading, accessibleProjectIds]);
 
     const fetchQueue = useCallback(async () => {
         setLoading(true);
@@ -154,7 +163,7 @@ export default function CallQueuePage() {
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
-                    <ProjectSelector value={projectId} onChange={setProjectId} />
+                    <ProjectSelector value={projectId} onChange={setProjectId} accessibleProjectIds={accessibleProjectIds} />
                     {queue.length > 0 && (
                         <Button
                             onClick={() => router.push(`/contacts/${queue[0].contact.id}`)}

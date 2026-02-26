@@ -54,9 +54,27 @@ import {
     Archive,
     ArchiveRestore,
     AlertTriangle,
+    Languages,
+    X,
 } from "lucide-react";
 import type { Profile, Project, Contact, Reminder } from "@/lib/types";
 import { useRouter } from "next/navigation";
+
+const TRANSCRIPTION_LANGUAGES = [
+    { value: "nl-NL", label: "🇳🇱 Dutch" },
+    { value: "en-US", label: "🇺🇸 English (US)" },
+    { value: "en-GB", label: "🇬🇧 English (UK)" },
+    { value: "ar-SA", label: "🇸🇦 Arabic" },
+    { value: "fr-FR", label: "🇫🇷 French" },
+    { value: "de-DE", label: "🇩🇪 German" },
+    { value: "es-ES", label: "🇪🇸 Spanish" },
+    { value: "it-IT", label: "🇮🇹 Italian" },
+    { value: "pt-PT", label: "🇵🇹 Portuguese" },
+    { value: "zh-CN", label: "🇨🇳 Chinese" },
+    { value: "ja-JP", label: "🇯🇵 Japanese" },
+    { value: "ko-KR", label: "🇰🇷 Korean" },
+    { value: "tr-TR", label: "🇹🇷 Turkish" },
+];
 
 const ROLE_LEVEL: Record<string, number> = {
     agent: 1,
@@ -108,6 +126,9 @@ export default function AdminPage() {
     // Project management state
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
     const [deleteWithContacts, setDeleteWithContacts] = useState(false);
+
+    // Project members state
+    const [projectMembersMap, setProjectMembersMap] = useState<Record<string, string[]>>({});
 
     const isSuperAdmin = currentUserRole === "super_admin";
     const isAdmin = currentUserRole === "admin" || currentUserRole === "super_admin";
@@ -254,6 +275,18 @@ export default function AdminPage() {
         });
         setUpcomingCallbacks(enrichedReminders as never[]);
 
+        // Fetch project members
+        const { data: membersData } = await supabase
+            .from("project_members")
+            .select("project_id, user_id");
+
+        const membersMap: Record<string, string[]> = {};
+        for (const m of membersData || []) {
+            if (!membersMap[m.project_id]) membersMap[m.project_id] = [];
+            membersMap[m.project_id].push(m.user_id);
+        }
+        setProjectMembersMap(membersMap);
+
         setLoading(false);
     }, []);
 
@@ -303,6 +336,28 @@ export default function AdminPage() {
         const newStatus = project.status === "archived" ? "active" : "archived";
         await supabase.from("projects").update({ status: newStatus }).eq("id", project.id);
         fetchData();
+    };
+
+    const handleChangeLanguage = async (projectId: string, language: string) => {
+        await supabase.from("projects").update({ transcription_language: language }).eq("id", projectId);
+        setProjects(projects.map(p => p.id === projectId ? { ...p, transcription_language: language } : p));
+        setProjectAssignments(projectAssignments.map(pa => pa.project.id === projectId ? { ...pa, project: { ...pa.project, transcription_language: language } } : pa));
+    };
+
+    const handleAddMember = async (projectId: string, userId: string) => {
+        await supabase.from("project_members").insert({ project_id: projectId, user_id: userId });
+        setProjectMembersMap(prev => ({
+            ...prev,
+            [projectId]: [...(prev[projectId] || []), userId],
+        }));
+    };
+
+    const handleRemoveMember = async (projectId: string, userId: string) => {
+        await supabase.from("project_members").delete().eq("project_id", projectId).eq("user_id", userId);
+        setProjectMembersMap(prev => ({
+            ...prev,
+            [projectId]: (prev[projectId] || []).filter(id => id !== userId),
+        }));
     };
 
     const confirmDeleteProject = async () => {
@@ -632,7 +687,15 @@ export default function AdminPage() {
                                                         </p>
                                                         {pa.project.status === 'archived' && <Badge variant="outline" className="text-[10px] h-4 px-1">Archived</Badge>}
                                                     </div>
-                                                    <p className="text-xs text-slate-400">{pa.contactCount} contacts</p>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <p className="text-xs text-slate-400">{pa.contactCount} contacts</p>
+                                                        {pa.project.transcription_language && (
+                                                            <Badge variant="outline" className="text-[10px] h-4 px-1.5 gap-0.5">
+                                                                <Languages className="h-2.5 w-2.5" />
+                                                                {TRANSCRIPTION_LANGUAGES.find(l => l.value === pa.project.transcription_language)?.label || pa.project.transcription_language}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
                                             {isAdmin && (
@@ -686,6 +749,55 @@ export default function AdminPage() {
                                                         ))}
                                                     </SelectContent>
                                                 </Select>
+                                                {isAdmin && (
+                                                    <Select value={pa.project.transcription_language || "nl-NL"} onValueChange={(lang) => handleChangeLanguage(pa.project.id, lang)}>
+                                                        <SelectTrigger className="h-7 text-xs w-[160px]">
+                                                            <SelectValue placeholder="Language..." />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {TRANSCRIPTION_LANGUAGES.map((lang) => (
+                                                                <SelectItem key={lang.value} value={lang.value} className="text-xs">{lang.label}</SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                )}
+                                            </div>
+                                        )}
+                                        {/* Project Members */}
+                                        {isAdmin && pa.project.status !== 'archived' && (
+                                            <div className="mt-3 pt-3 border-t border-slate-100">
+                                                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Members (access)</p>
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    {(projectMembersMap[pa.project.id] || []).map((uid) => (
+                                                        <Badge key={uid} variant="secondary" className="text-xs pr-1 flex items-center gap-1">
+                                                            {getProfileName(uid)}
+                                                            <button
+                                                                onClick={() => handleRemoveMember(pa.project.id, uid)}
+                                                                className="ml-0.5 rounded-full hover:bg-slate-300 p-0.5 transition-colors"
+                                                                title="Remove member"
+                                                            >
+                                                                <X className="h-3 w-3" />
+                                                            </button>
+                                                        </Badge>
+                                                    ))}
+                                                    {(projectMembersMap[pa.project.id] || []).length === 0 && (
+                                                        <span className="text-[10px] text-slate-400 italic">No members — agents can't see this list</span>
+                                                    )}
+                                                    <Select onValueChange={(userId) => handleAddMember(pa.project.id, userId)}>
+                                                        <SelectTrigger className="h-6 text-[10px] w-[130px] border-dashed">
+                                                            <SelectValue placeholder="+ Add member" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {profiles
+                                                                .filter(p => !(projectMembersMap[pa.project.id] || []).includes(p.id))
+                                                                .map((p) => (
+                                                                    <SelectItem key={p.id} value={p.id} className="text-xs">
+                                                                        {p.full_name || p.email}
+                                                                    </SelectItem>
+                                                                ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
                                             </div>
                                         )}
                                     </div>

@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ProjectSelector } from "@/components/project-selector";
+import { useAccessibleProjects } from "@/hooks/use-accessible-projects";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,14 @@ export default function DashboardPage() {
     const supabase = createClient();
     const router = useRouter();
     const [projectId, setProjectId] = useState("all");
+    const { accessibleProjectIds, loading: accessLoading } = useAccessibleProjects();
+
+    // Default agents to first accessible project instead of "all"
+    useEffect(() => {
+        if (!accessLoading && accessibleProjectIds !== null && accessibleProjectIds.length > 0) {
+            setProjectId(accessibleProjectIds[0]);
+        }
+    }, [accessLoading, accessibleProjectIds]);
 
     // Core counts
     const [totalContacts, setTotalContacts] = useState(0);
@@ -49,6 +58,7 @@ export default function DashboardPage() {
     // Lists
     const [reminders, setReminders] = useState<(Reminder & { contact?: Contact })[]>([]);
     const [recentActivity, setRecentActivity] = useState<(Activity & { contact?: Contact })[]>([]);
+    const [userRole, setUserRole] = useState<string>("agent");
 
     useEffect(() => {
         fetchDashboardData();
@@ -150,6 +160,16 @@ export default function DashboardPage() {
         );
         setFunnelData(funnelResults);
 
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData?.user) {
+            const { data: profile } = await supabase
+                .from("profiles")
+                .select("role")
+                .eq("id", userData.user.id)
+                .single();
+            if (profile?.role) setUserRole(profile.role);
+        }
+
         // --- Reminders (show all pending) ---
         const { data: reminderData } = await supabase
             .from("reminders")
@@ -211,7 +231,7 @@ export default function DashboardPage() {
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
-                    <ProjectSelector value={projectId} onChange={setProjectId} />
+                    <ProjectSelector value={projectId} onChange={setProjectId} accessibleProjectIds={accessibleProjectIds} />
                     <Button onClick={() => router.push("/call-queue")} className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:from-cyan-600 hover:to-teal-600">
                         <PhoneCall className="mr-2 h-4 w-4" /> Call Queue
                     </Button>
@@ -339,10 +359,10 @@ export default function DashboardPage() {
                                     <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
                                         <div
                                             className={`h-full rounded-full transition-all duration-500 ${f.status === "new" ? "bg-slate-400" :
-                                                    f.status === "contacted" ? "bg-cyan-500" :
-                                                        f.status === "meeting_scheduled" ? "bg-purple-500" :
-                                                            f.status === "client" ? "bg-green-500" :
-                                                                "bg-red-400"
+                                                f.status === "contacted" ? "bg-cyan-500" :
+                                                    f.status === "meeting_scheduled" ? "bg-purple-500" :
+                                                        f.status === "client" ? "bg-green-500" :
+                                                            "bg-red-400"
                                                 }`}
                                             style={{ width: `${Math.max((f.count / maxFunnel) * 100, 2)}%` }}
                                         />
@@ -355,11 +375,16 @@ export default function DashboardPage() {
 
                 {/* Upcoming Reminders with Mark Done */}
                 <Card>
-                    <CardHeader>
+                    <CardHeader className="flex flex-row items-center justify-between pb-2">
                         <CardTitle className="flex items-center gap-2 text-base">
                             <Clock className="h-4 w-4" />
                             Pending Reminders
                         </CardTitle>
+                        {(userRole === "admin" || userRole === "super_admin") && (
+                            <Button variant="ghost" size="sm" onClick={() => router.push("/calendar")} className="text-xs h-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50">
+                                View Calendar <ArrowRight className="ml-1 h-3 w-3" />
+                            </Button>
+                        )}
                     </CardHeader>
                     <CardContent>
                         {reminders.length === 0 ? (

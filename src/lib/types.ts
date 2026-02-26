@@ -36,6 +36,8 @@ export interface Project {
     created_by: string | null;
     created_at: string;
     status: "active" | "archived";
+    vonage_number: string | null;
+    transcription_language: string | null;
 }
 
 export interface Contact {
@@ -110,6 +112,58 @@ export interface CallLog {
     sale_value: number | null;
     sold_by: string | null;
     created_by: string | null;
+    created_at: string;
+}
+
+export type VonageCallStatus = "initiated" | "ringing" | "answered" | "completed" | "failed" | "rejected" | "busy" | "cancelled" | "timeout";
+
+export interface VonageCall {
+    id: string;
+    contact_id: string;
+    project_id: string | null;
+    vonage_uuid: string | null;
+    from_number: string | null;
+    to_number: string | null;
+    status: VonageCallStatus;
+    duration: number | null;
+    recording_url: string | null;
+    transcription: string | null;
+    created_by: string | null;
+    started_at: string | null;
+    ended_at: string | null;
+    created_at: string;
+}
+
+export interface CalendarConnection {
+    id: string;
+    user_id: string;
+    provider: 'google' | 'outlook' | 'apple' | 'calcom';
+    calendar_id: string | null;
+    calendar_name: string | null;
+    access_token: string | null;
+    refresh_token: string | null;
+    cal_user_id: string | null;
+    cal_access_token: string | null;
+    cal_refresh_token: string | null;
+    token_expires_at: string | null;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CalendarEvent {
+    id: string;
+    connection_id: string;
+    user_id: string;
+    external_id: string;
+    title: string;
+    description: string | null;
+    start_time: string;
+    end_time: string;
+    is_all_day: boolean;
+    location: string | null;
+    status: 'busy' | 'free' | 'tentative';
+    synced_at: string;
     created_at: string;
 }
 

@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useAccessibleProjects } from "@/hooks/use-accessible-projects";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,6 +58,7 @@ import type {
     CallOutcome,
     CallLog,
     InvalidReason,
+    VonageCall,
 } from "@/lib/types";
 import {
     STATUS_CONFIG,
@@ -64,6 +66,7 @@ import {
     PACKAGES,
     INVALID_REASONS,
 } from "@/lib/types";
+import { DialerPanel } from "@/components/dialer-panel";
 
 // Convert Sales Navigator URLs to standard LinkedIn profile URLs
 function toLinkedInProfileUrl(url: string): string {
@@ -92,7 +95,11 @@ export default function ContactDetailPage() {
     const [activities, setActivities] = useState<Activity[]>([]);
     const [reminders, setReminders] = useState<Reminder[]>([]);
     const [callLogs, setCallLogs] = useState<CallLog[]>([]);
+    const [vonageCalls, setVonageCalls] = useState<VonageCall[]>([]);
+    const [projectVonageNumber, setProjectVonageNumber] = useState<string | null>(null);
+    const [projectTranscriptionLang, setProjectTranscriptionLang] = useState<string | null>(null);
     const [newNote, setNewNote] = useState("");
+    const { accessibleProjectIds, loading: accessLoading } = useAccessibleProjects();
     const [editing, setEditing] = useState(false);
     const [editForm, setEditForm] = useState<Partial<Contact>>({});
 
@@ -129,13 +136,18 @@ export default function ContactDetailPage() {
     const [callScripts, setCallScripts] = useState<{ id: string; name: string; body: string }[]>([]);
     const [activeScriptId, setActiveScriptId] = useState("");
 
+    const [teamMembers, setTeamMembers] = useState<{ id: string, full_name: string, email: string }[]>([]);
+    const [assignedToUserId, setAssignedToUserId] = useState<string>("");
+
     const fetchAll = useCallback(async () => {
-        const [contactRes, notesRes, actRes, remRes, callLogRes] = await Promise.all([
+        const [contactRes, notesRes, actRes, remRes, callLogRes, vonageRes, profilesRes] = await Promise.all([
             supabase.from("contacts").select("*").eq("id", id).single(),
             supabase.from("notes").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
             supabase.from("activities").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
             supabase.from("reminders").select("*").eq("contact_id", id).order("due_date", { ascending: true }),
             supabase.from("call_logs").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
+            supabase.from("vonage_calls").select("*").eq("contact_id", id).order("created_at", { ascending: false }),
+            supabase.from("profiles").select("id, full_name, email").order("full_name"),
         ]);
 
         if (contactRes.data) {
@@ -144,19 +156,35 @@ export default function ContactDetailPage() {
 
             // Fetch sibling contacts in same project for next-contact nav
             if (contactRes.data.project_id) {
-                const { data: siblings } = await supabase
-                    .from("contacts")
-                    .select("id")
-                    .eq("project_id", contactRes.data.project_id)
-                    .order("created_at", { ascending: true });
+                const [{ data: siblings }, { data: project }] = await Promise.all([
+                    supabase
+                        .from("contacts")
+                        .select("id")
+                        .eq("project_id", contactRes.data.project_id)
+                        .order("created_at", { ascending: true }),
+                    supabase
+                        .from("projects")
+                        .select("vonage_number, transcription_language")
+                        .eq("id", contactRes.data.project_id)
+                        .single(),
+                ]);
                 setProjectContacts(siblings || []);
+                setProjectVonageNumber(project?.vonage_number || null);
+                setProjectTranscriptionLang(project?.transcription_language || null);
             }
         }
         setNotes(notesRes.data || []);
         setActivities(actRes.data || []);
         setReminders(remRes.data || []);
         setCallLogs(callLogRes.data || []);
-    }, [id]);
+        setVonageCalls(vonageRes.data || []);
+        setTeamMembers(profilesRes.data || []);
+
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData.user && !assignedToUserId) {
+            setAssignedToUserId(userData.user.id);
+        }
+    }, [id, supabase, assignedToUserId]);
 
     useEffect(() => {
         fetchAll();
@@ -269,6 +297,7 @@ export default function ContactDetailPage() {
             }
             if (selectedOutcome === "meeting_booked") {
                 callLogData.meeting_date = meetingDate ? new Date(meetingDate).toISOString() : null;
+                callLogData.meeting_assigned_to = assignedToUserId || userId;
             }
             if (selectedOutcome === "sale_made") {
                 callLogData.package_sold = packageSold || null;
@@ -326,8 +355,32 @@ export default function ContactDetailPage() {
                     contact_id: id,
                     title: `📅 Meeting with ${contact?.first_name} ${contact?.last_name}`,
                     due_date: new Date(meetingDate).toISOString(),
-                    assigned_to: userId,
+                    assigned_to: assignedToUserId || userId,
                 });
+
+                // Push to Google Calendar if connected
+                try {
+                    // Create an end time (assume 1 hour meeting by default)
+                    const start = new Date(meetingDate);
+                    const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+                    await fetch('/api/calendar/events', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            title: `Meeting with ${contact?.first_name} ${contact?.last_name}`,
+                            description: `CRM Contact: ${contact?.company_name || 'No company'}\nPhone: ${contact?.phone || 'N/A'}\nEmail: ${contact?.email || 'N/A'}\n\nNotes from call: ${outcomeNotes || 'None'}`,
+                            startTime: start.toISOString(),
+                            endTime: end.toISOString(),
+                            assignedToUserId: assignedToUserId || userId,
+                            leadName: `${contact?.first_name} ${contact?.last_name}`,
+                            leadEmail: contact?.email
+                        })
+                    });
+                } catch (calendarErr) {
+                    console.error("Failed to push meeting to Google Calendar:", calendarErr);
+                    // Non-blocking error, we still saved to the CRM
+                }
             }
 
             resetOutcomeForm();
@@ -344,6 +397,20 @@ export default function ContactDetailPage() {
         return (
             <div className="flex items-center justify-center py-20 text-slate-400">
                 Loading...
+            </div>
+        );
+    }
+
+    // Access guard: agents can only see contacts from their assigned projects
+    if (!accessLoading && accessibleProjectIds !== null && contact.project_id && !accessibleProjectIds.includes(contact.project_id)) {
+        return (
+            <div className="flex flex-col items-center justify-center py-20 gap-4">
+                <div className="rounded-full bg-red-100 p-4">
+                    <svg className="h-8 w-8 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                </div>
+                <h2 className="text-lg font-semibold text-slate-700">Access Denied</h2>
+                <p className="text-sm text-slate-500 text-center max-w-sm">You don&apos;t have access to this lead list. Ask an admin to assign you to the project.</p>
+                <Button variant="outline" onClick={() => router.push("/contacts")}>← Back to Contacts</Button>
             </div>
         );
     }
@@ -587,9 +654,24 @@ export default function ContactDetailPage() {
                                         )}
 
                                         {selectedOutcome === "meeting_booked" && (
-                                            <div className="space-y-2">
-                                                <Label>Meeting Date & Time</Label>
-                                                <Input type="datetime-local" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} required />
+                                            <div className="space-y-4">
+                                                <div className="space-y-2">
+                                                    <Label>Meeting Date & Time</Label>
+                                                    <Input type="datetime-local" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} required />
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label>Assign Meeting To:</Label>
+                                                    <Select value={assignedToUserId} onValueChange={setAssignedToUserId}>
+                                                        <SelectTrigger className="bg-white"><SelectValue placeholder="Select team member..." /></SelectTrigger>
+                                                        <SelectContent>
+                                                            {teamMembers.map((member) => (
+                                                                <SelectItem key={member.id} value={member.id}>
+                                                                    {member.full_name || member.email}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
                                             </div>
                                         )}
 
@@ -643,6 +725,16 @@ export default function ContactDetailPage() {
             <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
                 {/* ─── LEFT SIDEBAR ─── */}
                 <div className="space-y-5">
+                    {/* Dialer Card — TOP */}
+                    <DialerPanel
+                        contactId={contact.id}
+                        projectId={contact.project_id}
+                        initialPhone={contact.phone}
+                        fromNumber={projectVonageNumber || process.env.NEXT_PUBLIC_VONAGE_DEFAULT_NUMBER || null}
+                        transcriptionLanguage={projectTranscriptionLang}
+                        onCallEnded={() => fetchAll()}
+                    />
+
                     {/* Contact Info Card */}
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between pb-3">
@@ -699,173 +791,208 @@ export default function ContactDetailPage() {
                             )}
                         </CardContent>
                     </Card>
-
-                    {/* Reminders Card */}
-                    <Card>
-                        <CardHeader className="flex flex-row items-center justify-between pb-3">
-                            <CardTitle className="text-sm font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                                <Bell className="h-3.5 w-3.5" /> Reminders
-                            </CardTitle>
-                            <Dialog open={reminderOpen} onOpenChange={setReminderOpen}>
-                                <DialogTrigger asChild>
-                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0"><Plus className="h-4 w-4" /></Button>
-                                </DialogTrigger>
-                                <DialogContent>
-                                    <DialogHeader><DialogTitle>Add Reminder</DialogTitle></DialogHeader>
-                                    <form onSubmit={handleAddReminder} className="space-y-4">
-                                        <div className="space-y-2">
-                                            <Label>Title</Label>
-                                            <Input value={reminderTitle} onChange={(e) => setReminderTitle(e.target.value)} placeholder="e.g. Follow up on proposal" required />
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label>Due Date</Label>
-                                            <Input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} required />
-                                        </div>
-                                        <Button type="submit" className="w-full">Add Reminder</Button>
-                                    </form>
-                                </DialogContent>
-                            </Dialog>
-                        </CardHeader>
-                        <CardContent className="pt-0">
-                            {reminders.length === 0 ? (
-                                <p className="text-sm text-slate-400 italic">No reminders</p>
-                            ) : (
-                                <div className="space-y-2">
-                                    {[...reminders]
-                                        .sort((a, b) => {
-                                            if (a.is_priority && !b.is_priority) return -1;
-                                            if (!a.is_priority && b.is_priority) return 1;
-                                            return 0;
-                                        })
-                                        .map((r) => (
-                                            <div key={r.id} className={`flex items-center justify-between rounded-lg border p-2.5 text-sm ${r.is_done ? "opacity-40" : ""} ${r.is_priority && !r.is_done ? "border-orange-300 bg-orange-50" : ""}`}>
-                                                <div className="min-w-0">
-                                                    <p className={`truncate ${r.is_done ? "line-through text-slate-400" : "font-medium text-slate-700"}`}>
-                                                        {r.is_priority && !r.is_done && "🔥 "}{r.title}
-                                                    </p>
-                                                    <p className="text-xs text-slate-400">{formatDate(r.due_date)}</p>
-                                                </div>
-                                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => handleToggleReminder(r.id, r.is_done)}>
-                                                    <CheckCircle2 className={`h-4 w-4 ${r.is_done ? "text-green-500" : "text-slate-300"}`} />
-                                                </Button>
-                                            </div>
-                                        ))}
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
                 </div>
 
                 {/* ─── MAIN CONTENT (Tabs) ─── */}
                 <div>
-                    <Tabs defaultValue="call_logs" className="w-full">
+                    <Tabs defaultValue="history" className="w-full">
                         <TabsList className="w-full justify-start">
-                            <TabsTrigger value="call_logs" className="gap-1.5">
-                                <ClipboardList className="h-4 w-4" /> Call Logs
-                                {callLogs.length > 0 && <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold">{callLogs.length}</span>}
-                            </TabsTrigger>
-                            <TabsTrigger value="notes" className="gap-1.5">
-                                <MessageSquare className="h-4 w-4" /> Notes
-                                {notes.length > 0 && <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold">{notes.length}</span>}
+                            <TabsTrigger value="history" className="gap-1.5">
+                                <ClipboardList className="h-4 w-4" /> History
+                                {(callLogs.length + notes.length + vonageCalls.length) > 0 && <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold">{callLogs.length + notes.length + vonageCalls.length}</span>}
                             </TabsTrigger>
                             <TabsTrigger value="activity" className="gap-1.5">
                                 <Bell className="h-4 w-4" /> Activity
+                                {(() => {
+                                    const now = new Date();
+                                    const pendingReminders = reminders.filter(r => !r.is_done);
+                                    const hasOverdue = pendingReminders.some(r => new Date(r.due_date) <= now);
+                                    const hasAlmostDue = !hasOverdue && pendingReminders.some(r => {
+                                        const diff = new Date(r.due_date).getTime() - now.getTime();
+                                        return diff > 0 && diff <= 24 * 60 * 60 * 1000;
+                                    });
+                                    if (hasOverdue) return <span className="ml-1 inline-flex items-center justify-center h-5 w-5 rounded-full bg-red-500 text-white text-[10px] font-bold animate-wiggle">!</span>;
+                                    if (hasAlmostDue) return <span className="ml-1 inline-flex items-center justify-center h-5 w-5 rounded-full bg-orange-500 text-white text-[10px] font-bold">!</span>;
+                                    if (pendingReminders.length > 0) return <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold">{pendingReminders.length}</span>;
+                                    return null;
+                                })()}
                             </TabsTrigger>
                         </TabsList>
 
-                        {/* ─── Call Logs Tab ─── */}
-                        <TabsContent value="call_logs">
-                            <Card>
-                                <CardContent className="pt-6">
-                                    {callLogs.length === 0 ? (
-                                        <div className="flex flex-col items-center justify-center py-12 text-center">
-                                            <ClipboardList className="h-10 w-10 text-slate-300 mb-3" />
-                                            <p className="text-sm font-medium text-slate-500">No call logs yet</p>
-                                            <p className="text-xs text-slate-400 mt-1">Click &quot;Log Outcome&quot; after calling this contact</p>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            {callLogs.map((log) => (
-                                                <div key={log.id} className={`rounded-lg border-l-4 bg-white p-4 shadow-sm ${log.outcome === "sale_made" ? "border-l-green-500" :
-                                                    log.outcome === "meeting_booked" ? "border-l-purple-500" :
-                                                        log.outcome === "callback_priority" ? "border-l-orange-500" :
-                                                            log.outcome === "callback" ? "border-l-yellow-500" :
-                                                                "border-l-red-400"
-                                                    }`}>
-                                                    <div className="flex items-center justify-between mb-2">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-lg">{OUTCOME_CONFIG[log.outcome]?.icon}</span>
-                                                            <span className="font-semibold text-sm text-slate-800">{OUTCOME_CONFIG[log.outcome]?.label}</span>
-                                                        </div>
-                                                        <span className="text-xs text-slate-400">{formatDate(log.created_at)}</span>
-                                                    </div>
-                                                    <div className="space-y-1 text-sm text-slate-600">
-                                                        {log.callback_date && <p>📞 Callback scheduled: <span className="font-medium">{formatDate(log.callback_date)}</span></p>}
-                                                        {log.invalid_reason && <p>Reason: <span className="font-medium">{INVALID_REASONS[log.invalid_reason as keyof typeof INVALID_REASONS] || log.invalid_reason}</span></p>}
-                                                        {log.meeting_date && <p>📅 Meeting: <span className="font-medium">{formatDate(log.meeting_date)}</span></p>}
-                                                        {log.package_sold && <p>📦 Package: <span className="font-medium">{log.package_sold}</span></p>}
-                                                        {log.sale_value && <p>💰 Value: <span className="font-medium text-green-700">€{Number(log.sale_value).toFixed(2)}</span></p>}
-                                                        {log.notes && <p className="italic text-slate-500 mt-1">&quot;{log.notes}&quot;</p>}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </CardContent>
-                            </Card>
-                        </TabsContent>
-
-                        {/* ─── Notes Tab ─── */}
-                        <TabsContent value="notes">
+                        {/* ─── History Tab (Call Logs + Notes + Vonage Calls merged chronologically) ─── */}
+                        <TabsContent value="history">
                             <Card>
                                 <CardContent className="pt-6">
                                     <form onSubmit={handleAddNote} className="mb-5">
                                         <div className="flex gap-2">
-                                            <Textarea
-                                                placeholder="Write a note..."
-                                                value={newNote}
-                                                onChange={(e) => setNewNote(e.target.value)}
-                                                rows={2}
-                                                className="flex-1 text-sm"
-                                            />
+                                            <Textarea placeholder="Write a note..." value={newNote} onChange={(e) => setNewNote(e.target.value)} rows={2} className="flex-1 text-sm" />
                                             <Button type="submit" size="sm" className="self-end">Add</Button>
                                         </div>
                                     </form>
                                     <Separator className="mb-5" />
-                                    {notes.length === 0 ? (
+                                    {callLogs.length === 0 && vonageCalls.length === 0 && notes.length === 0 ? (
                                         <div className="flex flex-col items-center justify-center py-12 text-center">
-                                            <MessageSquare className="h-10 w-10 text-slate-300 mb-3" />
-                                            <p className="text-sm font-medium text-slate-500">No notes yet</p>
-                                            <p className="text-xs text-slate-400 mt-1">Add a note above</p>
+                                            <ClipboardList className="h-10 w-10 text-slate-300 mb-3" />
+                                            <p className="text-sm font-medium text-slate-500">No history yet</p>
+                                            <p className="text-xs text-slate-400 mt-1">Call logs, outcomes, and notes will appear here</p>
                                         </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            {notes.map((n) => (
-                                                <div key={n.id} className="rounded-lg bg-slate-50 p-4">
-                                                    <p className="text-sm whitespace-pre-wrap text-slate-700">{n.content}</p>
-                                                    <p className="mt-2 text-xs text-slate-400">{formatDate(n.created_at)}</p>
-                                                </div>
-                                            ))}
+                                            {[
+                                                ...vonageCalls.map(vc => ({ type: "vonage" as const, date: vc.created_at, data: vc })),
+                                                ...callLogs.map(cl => ({ type: "outcome" as const, date: cl.created_at, data: cl })),
+                                                ...notes.map(n => ({ type: "note" as const, date: n.created_at, data: n })),
+                                            ]
+                                                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                                .map((item) => {
+                                                    if (item.type === "vonage") {
+                                                        const vc = item.data as VonageCall;
+                                                        return (
+                                                            <div key={`vc-${vc.id}`} className="rounded-lg border-l-4 border-l-cyan-500 bg-white p-4 shadow-sm">
+                                                                <div className="flex items-center justify-between mb-2">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <PhoneCall className="h-4 w-4 text-cyan-500" />
+                                                                        <span className="font-semibold text-sm text-slate-800">Call</span>
+                                                                        {vc.duration != null && <Badge className="bg-cyan-100 text-cyan-700 text-[10px] px-1.5 py-0">{Math.floor(vc.duration / 60)}m {vc.duration % 60}s</Badge>}
+                                                                        <Badge className={`text-[10px] px-1.5 py-0 ${vc.status === "completed" || vc.status === "answered" ? "bg-green-100 text-green-700" : vc.status === "failed" || vc.status === "rejected" || vc.status === "busy" ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}`}>{vc.status}</Badge>
+                                                                    </div>
+                                                                    <span className="text-xs text-slate-400">{formatDate(vc.created_at)}</span>
+                                                                </div>
+                                                                <div className="space-y-2 text-sm text-slate-600">
+                                                                    {vc.to_number && <p className="text-xs text-slate-400">📞 {vc.to_number}{vc.from_number ? ` (from ${vc.from_number})` : ""}</p>}
+                                                                    {vc.recording_url && (<div className="mt-2"><p className="text-xs text-slate-500 mb-1">🎙️ Recording:</p><audio controls className="w-full h-8" preload="none"><source src={vc.recording_url} type="audio/mp3" /></audio></div>)}
+                                                                    {vc.transcription && (<details className="mt-2"><summary className="text-xs text-cyan-600 cursor-pointer hover:text-cyan-700">📝 View Transcription</summary><p className="mt-2 text-xs text-slate-600 bg-slate-50 p-3 rounded-md whitespace-pre-wrap leading-relaxed">{vc.transcription}</p></details>)}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    if (item.type === "outcome") {
+                                                        const log = item.data as CallLog;
+                                                        return (
+                                                            <div key={`cl-${log.id}`} className={`rounded-lg border-l-4 bg-white p-4 shadow-sm ${log.outcome === "sale_made" ? "border-l-green-500" : log.outcome === "meeting_booked" ? "border-l-purple-500" : log.outcome === "callback_priority" ? "border-l-orange-500" : log.outcome === "callback" ? "border-l-yellow-500" : "border-l-red-400"}`}>
+                                                                <div className="flex items-center justify-between mb-2">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-lg">{OUTCOME_CONFIG[log.outcome]?.icon}</span>
+                                                                        <span className="font-semibold text-sm text-slate-800">{OUTCOME_CONFIG[log.outcome]?.label}</span>
+                                                                    </div>
+                                                                    <span className="text-xs text-slate-400">{formatDate(log.created_at)}</span>
+                                                                </div>
+                                                                <div className="space-y-1 text-sm text-slate-600">
+                                                                    {log.callback_date && <p>📞 Callback: <span className="font-medium">{formatDate(log.callback_date)}</span></p>}
+                                                                    {log.invalid_reason && <p>Reason: <span className="font-medium">{INVALID_REASONS[log.invalid_reason as keyof typeof INVALID_REASONS] || log.invalid_reason}</span></p>}
+                                                                    {log.meeting_date && <p>📅 Meeting: <span className="font-medium">{formatDate(log.meeting_date)}</span></p>}
+                                                                    {log.package_sold && <p>📦 Package: <span className="font-medium">{log.package_sold}</span></p>}
+                                                                    {log.sale_value && <p>💰 Value: <span className="font-medium text-green-700">€{Number(log.sale_value).toFixed(2)}</span></p>}
+                                                                    {log.notes && <p className="italic text-slate-500 mt-1">&quot;{log.notes}&quot;</p>}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    const note = item.data as Note;
+                                                    return (
+                                                        <div key={`n-${note.id}`} className="rounded-lg border-l-4 border-l-slate-300 bg-slate-50 p-4">
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                                <div className="flex items-center gap-2"><MessageSquare className="h-3.5 w-3.5 text-slate-400" /><span className="text-xs font-medium text-slate-500 uppercase">Note</span></div>
+                                                                <span className="text-xs text-slate-400">{formatDate(note.created_at)}</span>
+                                                            </div>
+                                                            <p className="text-sm whitespace-pre-wrap text-slate-700">{note.content}</p>
+                                                        </div>
+                                                    );
+                                                })}
                                         </div>
                                     )}
                                 </CardContent>
                             </Card>
                         </TabsContent>
 
-                        {/* ─── Activity Tab ─── */}
+                        {/* ─── Activity & Reminders Tab ─── */}
                         <TabsContent value="activity">
                             <Card>
                                 <CardContent className="pt-6">
+                                    {/* Upcoming Reminders */}
+                                    {reminders.filter(r => !r.is_done).length > 0 && (
+                                        <div className="mb-6">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5"><Bell className="h-3.5 w-3.5" /> Upcoming Reminders</h3>
+                                                <Dialog open={reminderOpen} onOpenChange={setReminderOpen}>
+                                                    <DialogTrigger asChild><Button variant="ghost" size="sm" className="h-7 w-7 p-0"><Plus className="h-4 w-4" /></Button></DialogTrigger>
+                                                    <DialogContent>
+                                                        <DialogHeader><DialogTitle>Add Reminder</DialogTitle></DialogHeader>
+                                                        <form onSubmit={handleAddReminder} className="space-y-4">
+                                                            <div className="space-y-2"><Label>Title</Label><Input value={reminderTitle} onChange={(e) => setReminderTitle(e.target.value)} placeholder="e.g. Follow up on proposal" required /></div>
+                                                            <div className="space-y-2"><Label>Due Date</Label><Input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} required /></div>
+                                                            <Button type="submit" className="w-full">Add Reminder</Button>
+                                                        </form>
+                                                    </DialogContent>
+                                                </Dialog>
+                                            </div>
+                                            <div className="space-y-2">
+                                                {[...reminders].filter(r => !r.is_done).sort((a, b) => { if (a.is_priority && !b.is_priority) return -1; if (!a.is_priority && b.is_priority) return 1; return new Date(a.due_date).getTime() - new Date(b.due_date).getTime(); }).map((r) => {
+                                                    const now = new Date();
+                                                    const dueDate = new Date(r.due_date);
+                                                    const isOverdue = dueDate <= now;
+                                                    const isAlmostDue = !isOverdue && (dueDate.getTime() - now.getTime()) <= 24 * 60 * 60 * 1000;
+                                                    return (
+                                                        <div key={r.id} className={`flex items-center justify-between rounded-lg border p-2.5 text-sm ${isOverdue ? "border-red-300 bg-red-50" : isAlmostDue ? "border-orange-300 bg-orange-50" : r.is_priority ? "border-orange-300 bg-orange-50" : ""}`}>
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                {isOverdue && <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-red-500 text-white text-[10px] font-bold animate-wiggle shrink-0">!</span>}
+                                                                {isAlmostDue && !isOverdue && <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-orange-500 text-white text-[10px] font-bold shrink-0">!</span>}
+                                                                <div className="min-w-0">
+                                                                    <p className="truncate font-medium text-slate-700">{r.is_priority && "🔥 "}{r.title}</p>
+                                                                    <p className={`text-xs ${isOverdue ? "text-red-500 font-medium" : "text-slate-400"}`}>{isOverdue ? "⚠️ Overdue — " : ""}{formatDate(r.due_date)}</p>
+                                                                </div>
+                                                            </div>
+                                                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => handleToggleReminder(r.id, r.is_done)}><CheckCircle2 className="h-4 w-4 text-slate-300" /></Button>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            <Separator className="my-5" />
+                                        </div>
+                                    )}
+                                    {/* Add Reminder when none exist */}
+                                    {reminders.filter(r => !r.is_done).length === 0 && (
+                                        <div className="mb-4 flex justify-end">
+                                            <Dialog open={reminderOpen} onOpenChange={setReminderOpen}>
+                                                <DialogTrigger asChild><Button variant="outline" size="sm"><Plus className="mr-1.5 h-3.5 w-3.5" /> Add Reminder</Button></DialogTrigger>
+                                                <DialogContent>
+                                                    <DialogHeader><DialogTitle>Add Reminder</DialogTitle></DialogHeader>
+                                                    <form onSubmit={handleAddReminder} className="space-y-4">
+                                                        <div className="space-y-2"><Label>Title</Label><Input value={reminderTitle} onChange={(e) => setReminderTitle(e.target.value)} placeholder="e.g. Follow up on proposal" required /></div>
+                                                        <div className="space-y-2"><Label>Due Date</Label><Input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} required /></div>
+                                                        <Button type="submit" className="w-full">Add Reminder</Button>
+                                                    </form>
+                                                </DialogContent>
+                                            </Dialog>
+                                        </div>
+                                    )}
+                                    {/* Completed Reminders */}
+                                    {reminders.filter(r => r.is_done).length > 0 && (
+                                        <div className="mb-6">
+                                            <details>
+                                                <summary className="text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer mb-2">✅ Done ({reminders.filter(r => r.is_done).length})</summary>
+                                                <div className="space-y-2">
+                                                    {reminders.filter(r => r.is_done).map((r) => (
+                                                        <div key={r.id} className="flex items-center justify-between rounded-lg border p-2.5 text-sm opacity-40">
+                                                            <div className="min-w-0"><p className="truncate line-through text-slate-400">{r.title}</p><p className="text-xs text-slate-400">{formatDate(r.due_date)}</p></div>
+                                                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => handleToggleReminder(r.id, r.is_done)}><CheckCircle2 className="h-4 w-4 text-green-500" /></Button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </details>
+                                            <Separator className="my-5" />
+                                        </div>
+                                    )}
+                                    {/* Activity Timeline */}
+                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Activity Timeline</h3>
                                     {activities.length === 0 ? (
-                                        <div className="flex flex-col items-center justify-center py-12 text-center">
+                                        <div className="flex flex-col items-center justify-center py-8 text-center">
                                             <Bell className="h-10 w-10 text-slate-300 mb-3" />
                                             <p className="text-sm font-medium text-slate-500">No activity yet</p>
                                         </div>
                                     ) : (
                                         <div className="relative">
-                                            {/* Timeline line */}
                                             <div className="absolute left-[15px] top-2 bottom-2 w-px bg-slate-200" />
-
                                             <div className="space-y-4">
                                                 {activities.map((a) => (
                                                     <div key={a.id} className="flex items-start gap-4 pl-1">
